@@ -73,20 +73,21 @@ namespace RH
             var r = Ui.Center(1000, 760);
             Ui.Panel(r);
             Ui.Label(new Rect(r.x + 50, r.y + 40, 900, 70), $"DAY {career.day}", 56, Ui.Text, TextAnchor.UpperLeft, true);
-            Ui.Label(new Rect(r.x + 52, r.y + 110, 900, 30), "Shift 08:00 - 17:00   Data hall 1", 22, Ui.Accent);
+            Ui.Label(new Rect(r.x + 52, r.y + 110, 900, 30), $"Today's work order: {shift.tickets.Count} tickets   Data hall 1", 22, Ui.Accent);
             Ui.Label(new Rect(r.x + 52, r.y + 170, 440, 200),
                 $"Wallet: {Ui.Money(career.money)}\nReputation: {career.rep:0}/100\nTickets closed: {career.ticketsDone}\nBest shift: {Ui.Money(career.bestDay)}", 22, Ui.Text);
             string news = career.day == 1 ? "First day! Expect firmware updates, failed hardware and capacity expansions."
                 : career.day == 2 ? "New today: incidents (servers down) and customer equipment deliveries at the loading dock."
                 : career.day == 3 ? "New today: full rack build-outs for brand-new contracts."
-                : "Tickets are coming in faster as the site grows.";
+                : "The site keeps growing, and so does the work order.";
             Ui.Label(new Rect(r.x + 520, r.y + 170, 430, 200), "<b>Dispatch notes</b>\n" + news, 20, Ui.Dim);
             Ui.Label(new Rect(r.x + 52, r.y + 380, 900, 220),
                 "<b>How it works</b>\n" +
-                "- Tickets arrive on your tablet [Tab]. Each one names a rack and the jobs to do there.\n" +
+                "- Today's tickets are on your tablet [Tab]. Each one names a rack and the jobs to do there.\n" +
                 "- Grab servers and spare parts in the storage room, customer gear at the loading dock.\n" +
                 "- Walk up to the rack and press [E] to work on it. Every job is hands-on.\n" +
-                "- Close tickets before their deadline. Late work pays half; unfinished work costs reputation.",
+                "- There's no clock. Take your time, but finish everything before you clock out from the tablet.\n" +
+                "- Unfinished tickets go to the night shift and cost reputation. Mistake-free tickets pay a 20% bonus.",
                 19, Ui.Text);
             if (Ui.Button(new Rect(r.x + 50, r.yMax - 100, 300, 60), "Clock in", true, 24, Ui.Good)) ClockIn();
             if (Ui.Button(new Rect(r.xMax - 250, r.yMax - 100, 200, 60), "Main menu", true, 20)) ShowMenu();
@@ -95,7 +96,7 @@ namespace RH
         void DrawPause()
         {
             Ui.Box(new Rect(0, 0, Ui.W, Ui.H), new Color(0, 0, 0, 0.6f));
-            var r = Ui.Center(560, 560);
+            var r = Ui.Center(560, 470);
             Ui.Panel(r);
             Ui.Label(new Rect(r.x, r.y + 30, r.width, 50), "Paused", 40, Ui.Text, TextAnchor.UpperCenter, true);
             float y = r.y + 110;
@@ -104,15 +105,11 @@ namespace RH
             y += 70;
             Ui.Label(new Rect(r.x + 50, y, 300, 30), $"Volume: {Audio.Volume * 100:0}%", 19, Ui.Text);
             Audio.Volume = GUI.HorizontalSlider(new Rect(r.x + 50, y + 34, 460, 20), Audio.Volume, 0f, 1f);
-            y += 70;
-            Ui.Label(new Rect(r.x + 50, y, 460, 30), $"Shift length: {9f / MinutesPerSecond:0} real minutes", 19, Ui.Text);
-            MinutesPerSecond = GUI.HorizontalSlider(new Rect(r.x + 50, y + 34, 460, 20), MinutesPerSecond, 0.4f, 1.5f);
             y += 90;
             if (Ui.Button(new Rect(r.x + 50, y, 460, 56), "Resume", true, 22, Ui.Good))
             {
                 PlayerPrefs.SetFloat("sens", Player.Sensitivity);
                 PlayerPrefs.SetFloat("vol", Audio.Volume);
-                PlayerPrefs.SetFloat("pace", MinutesPerSecond);
                 screen = pausedFrom;
             }
             if (Ui.Button(new Rect(r.x + 50, y + 70, 460, 56), "Quit to menu (lose today's progress)", true, 19, Ui.Bad)) ShowMenu();
@@ -122,13 +119,13 @@ namespace RH
         void DrawHud(bool full = true)
         {
             if (shift == null) return;
-            // Clock and shift progress
+            // Work-order progress (there is no clock: the shift ends when the player clocks out)
             var tl = new Rect(20, 20, 330, 110);
             Ui.Panel(tl);
-            Ui.Label(new Rect(tl.x + 18, tl.y + 8, 200, 56), shift.Clock, 46, Ui.Text, TextAnchor.UpperLeft, true);
+            Ui.Label(new Rect(tl.x + 18, tl.y + 8, 200, 56), $"{shift.DoneCount}/{shift.tickets.Count}", 46, shift.AllDone ? Ui.Good : Ui.Text, TextAnchor.UpperLeft, true);
             Ui.Label(new Rect(tl.x + 190, tl.y + 16, 130, 30), $"DAY {career.day}", 20, Ui.Accent, TextAnchor.UpperRight, true);
-            Ui.Label(new Rect(tl.x + 190, tl.y + 42, 130, 30), "ends 17:00", 15, Ui.Dim, TextAnchor.UpperRight);
-            Ui.Bar(new Rect(tl.x + 18, tl.y + 78, tl.width - 36, 12), (shift.minute - Shift.StartMin) / (Shift.EndMin - Shift.StartMin), Ui.Accent);
+            Ui.Label(new Rect(tl.x + 150, tl.y + 42, 170, 30), "tickets done", 15, Ui.Dim, TextAnchor.UpperRight);
+            Ui.Bar(new Rect(tl.x + 18, tl.y + 78, tl.width - 36, 12), shift.tickets.Count == 0 ? 0 : shift.DoneCount / (float)shift.tickets.Count, shift.AllDone ? Ui.Good : Ui.Accent);
             // Wallet and reputation
             var tr = new Rect(Ui.W - 360, 20, 340, 110);
             Ui.Panel(tr);
@@ -139,19 +136,25 @@ namespace RH
 
             // Ticket strip
             float y = 150;
-            foreach (var t in shift.OpenTickets.OrderBy(x => x.due).Take(5))
+            foreach (var t in shift.OpenTickets.Take(6))
             {
-                int left = t.due - Mathf.FloorToInt(shift.minute);
                 var r = new Rect(20, y, 420, 62);
                 Ui.Box(r, new Color(0.05f, 0.07f, 0.09f, 0.82f));
                 Ui.Box(new Rect(r.x, r.y, 5, r.height), Catalog.CustColor(t.customer));
                 if (t.id == trackedTicket) Ui.Border(r, Ui.Accent, 2f);
                 Ui.Label(new Rect(r.x + 16, r.y + 6, 300, 24), $"#{t.id}  {Ticket.TypeName(t.type)}  {t.rack}", 16, Ui.Text, TextAnchor.UpperLeft, true, false);
                 Ui.Label(new Rect(r.x + 16, r.y + 32, 300, 24), $"{t.DoneCount}/{t.tasks.Count} tasks", 15, Ui.Dim);
-                Ui.Label(new Rect(r.x + 250, r.y + 8, 154, 46), left >= 0 ? $"{left} min" : $"LATE {-left}m", 22, left < 0 ? Ui.Bad : left < 20 ? Ui.Warn : Ui.Text, TextAnchor.MiddleRight, true);
+                Ui.Bar(new Rect(r.x + 290, r.y + 26, 112, 10), t.DoneCount / (float)t.tasks.Count, Ui.Accent);
                 y += 70;
             }
-            if (!shift.OpenTickets.Any()) Ui.Label(new Rect(24, y, 420, 30), "Queue is empty. Waiting for tickets...", 17, Ui.Dim);
+            if (shift.AllDone)
+            {
+                var done = new Rect(20, y, 420, 70);
+                Ui.Box(done, new Color(0.05f, 0.2f, 0.1f, 0.88f));
+                Ui.Border(done, Ui.Good, 2f);
+                Ui.Label(done, "Work order complete!\nOpen your tablet [Tab] to clock out.", 18, Ui.Good, TextAnchor.MiddleCenter, true);
+            }
+            else if (shift.OpenTickets.Count() > 6) Ui.Label(new Rect(24, y, 420, 30), $"+{shift.OpenTickets.Count() - 6} more on your tablet [Tab]", 16, Ui.Dim);
 
             if (!full) return;
             // Crosshair and interaction prompt
@@ -217,33 +220,33 @@ namespace RH
             var r = Ui.Center(1500, 860);
             Ui.Panel(r);
             Ui.Label(new Rect(r.x + 30, r.y + 20, 600, 40), "TICKET QUEUE", 28, Ui.Text, TextAnchor.UpperLeft, true);
-            Ui.Label(new Rect(r.xMax - 630, r.y + 24, 600, 30), $"{shift.Clock}   {Ui.Money(career.money)}   Rep {career.rep:0}      [Tab] close", 18, Ui.Dim, TextAnchor.UpperRight);
-            var list = shift.tickets.OrderBy(t => t.Open ? 0 : 1).ThenBy(t => t.due).ToList();
-            var lr = new Rect(r.x + 20, r.y + 80, 520, r.height - 100);
+            Ui.Label(new Rect(r.xMax - 630, r.y + 24, 600, 30), $"{shift.DoneCount}/{shift.tickets.Count} done   {Ui.Money(career.money)}   Rep {career.rep:0}      [Tab] close", 18, Ui.Dim, TextAnchor.UpperRight);
+            var list = shift.tickets.OrderBy(t => t.Open ? 0 : 1).ThenBy(t => t.id).ToList();
+            var lr = new Rect(r.x + 20, r.y + 80, 520, r.height - 190);
             Ui.Box(lr, new Color(0, 0, 0, 0.25f));
             float y = lr.y + 6;
-            foreach (var t in list.Take(11))
+            foreach (var t in list.Take(9))
             {
                 var row = new Rect(lr.x + 6, y, lr.width - 12, 64);
                 bool sel = t.id == selectedTicket;
                 Ui.Box(row, sel ? new Color(0.15f, 0.25f, 0.35f, 0.9f) : Ui.Hover(row) ? new Color(0.12f, 0.16f, 0.2f, 0.9f) : new Color(0.08f, 0.1f, 0.12f, 0.9f));
                 Ui.Box(new Rect(row.x, row.y, 5, row.height), Catalog.CustColor(t.customer));
-                int left = t.due - Mathf.FloorToInt(shift.minute);
-                string status = t.status == TicketStatus.Done ? "DONE" : left >= 0 ? $"{left} min" : "LATE";
+                string status = t.status == TicketStatus.Done ? "DONE" : $"{t.DoneCount}/{t.tasks.Count}";
                 Ui.Label(new Rect(row.x + 16, row.y + 6, 380, 26), $"#{t.id}  {Ticket.TypeName(t.type)}", 17, t.Open ? Ui.Text : Ui.Dim, TextAnchor.UpperLeft, true, false);
                 Ui.Label(new Rect(row.x + 16, row.y + 34, 380, 24), $"{t.rack}  {t.customer}", 15, Ui.Dim, TextAnchor.UpperLeft, false, false);
-                Ui.Label(new Rect(row.xMax - 130, row.y + 6, 118, 50), status, 19, t.status == TicketStatus.Done ? Ui.Good : left < 0 ? Ui.Bad : left < 20 ? Ui.Warn : Ui.Text, TextAnchor.MiddleRight, true);
+                Ui.Label(new Rect(row.xMax - 130, row.y + 6, 118, 50), status, 19, t.status == TicketStatus.Done ? Ui.Good : Ui.Text, TextAnchor.MiddleRight, true);
                 if (Event.current.type == EventType.MouseDown && row.Contains(Event.current.mousePosition)) { selectedTicket = t.id; Event.current.Use(); Audio.Play("click"); }
                 y += 70;
             }
-            if (list.Count == 0) Ui.Label(new Rect(lr.x + 20, lr.y + 20, 480, 60), "No tickets yet. They'll arrive here as the shift goes on.", 18, Ui.Dim);
+            if (list.Count > 9) Ui.Label(new Rect(lr.x + 12, lr.yMax - 26, lr.width - 24, 22), $"+{list.Count - 9} more below the fold (finish some to see them)", 14, Ui.Dim);
+            DrawClockOut(new Rect(r.x + 20, r.yMax - 100, 520, 80));
 
             var sel2 = shift.tickets.Find(t => t.id == selectedTicket);
             var dr = new Rect(r.x + 560, r.y + 80, r.width - 580, r.height - 100);
             if (sel2 == null) return;
             Ui.Label(new Rect(dr.x, dr.y, dr.width, 60), sel2.title, 25, Ui.Text, TextAnchor.UpperLeft, true);
             Ui.Label(new Rect(dr.x, dr.y + 66, dr.width, 26),
-                $"{Ticket.TypeName(sel2.type)}   |   Rack {sel2.rack}   |   Opened {Shift.FormatTime(sel2.created)}   |   Due {Shift.FormatTime(sel2.due)}   |   Pays ~{Ui.Money(Mathf.RoundToInt(sel2.pay * career.PayMul))}",
+                $"{Ticket.TypeName(sel2.type)}   |   Rack {sel2.rack}   |   {sel2.customer}   |   Pays ~{Ui.Money(Mathf.RoundToInt(sel2.pay * career.PayMul))}" + (sel2.Open ? sel2.mistakes == 0 ? "  (+20% if clean)" : "  (clean bonus lost)" : ""),
                 17, Ui.Accent);
             float bh = Ui.TextHeight(sel2.body, dr.width, 19);
             Ui.Label(new Rect(dr.x, dr.y + 106, dr.width, bh), sel2.body, 19, Ui.Text);
@@ -265,6 +268,21 @@ namespace RH
             }
         }
 
+        /// <summary>Ending the shift is the player's call. Open work needs a second click to confirm.</summary>
+        void DrawClockOut(Rect r)
+        {
+            int open = shift.OpenTickets.Count();
+            if (!confirmClockOut)
+            {
+                if (Ui.Button(r, open == 0 ? "Clock out: work order complete" : $"Clock out ({open} ticket{(open > 1 ? "s" : "")} unfinished)", true, 21, open == 0 ? Ui.Good : Ui.Warn)) ClockOut();
+                return;
+            }
+            Ui.Box(new Rect(r.x, r.y - 70, r.width, r.height + 70), new Color(0.25f, 0.12f, 0.05f, 0.95f));
+            Ui.Label(new Rect(r.x + 16, r.y - 62, r.width - 32, 56), $"{open} unfinished ticket{(open > 1 ? "s" : "")} will go to the night shift and cost about {open * 4} reputation. Clock out anyway?", 17, Ui.Warn);
+            if (Ui.Button(new Rect(r.x + 10, r.y + 12, r.width / 2 - 20, r.height - 24), "Yes, clock out", true, 19, Ui.Bad)) ClockOut();
+            if (Ui.Button(new Rect(r.x + r.width / 2 + 10, r.y + 12, r.width / 2 - 20, r.height - 24), "Keep working", true, 19, Ui.Good)) confirmClockOut = false;
+        }
+
         // ================================================================ rack work panel
         void DrawRack()
         {
@@ -274,7 +292,7 @@ namespace RH
             Ui.Panel(r);
             Ui.Label(new Rect(r.x + 30, r.y + 20, 800, 44), $"RACK {rack.label}", 30, Ui.Text, TextAnchor.UpperLeft, true);
             Ui.Label(new Rect(r.x + 260, r.y + 28, 600, 30), rack.owner ?? "vacant", 20, rack.owner != null ? Catalog.CustColor(rack.owner) : Ui.Dim, TextAnchor.UpperLeft, true);
-            Ui.Label(new Rect(r.xMax - 530, r.y + 26, 500, 30), $"{shift.Clock}      [E] / [Esc] step back", 18, Ui.Dim, TextAnchor.UpperRight);
+            Ui.Label(new Rect(r.xMax - 530, r.y + 26, 500, 30), "[E] / [Esc] step back", 18, Ui.Dim, TextAnchor.UpperRight);
 
             // Elevation
             const float uh = 17.6f;
@@ -351,15 +369,16 @@ namespace RH
             Ui.Label(new Rect(r.x + 50, r.y + 40, 800, 60), $"Shift over: Day {career.day - 1}", 44, Ui.Text, TextAnchor.UpperLeft, true);
             float repD = career.rep - shift.repStart;
             Ui.Label(new Rect(r.x + 52, r.y + 130, 800, 360),
-                $"Tickets closed:  {shift.completed}\n" +
-                $"Closed late:  {shift.late}\n" +
+                $"Tickets closed:  {shift.completed} of {shift.tickets.Count}\n" +
+                $"Clean (no mistakes):  {shift.tickets.Count(t => t.status == TicketStatus.Done && t.mistakes == 0)}\n" +
                 $"Handed to night shift:  {shift.handedOver}\n" +
                 $"Mistakes:  {shift.mistakes}\n\n" +
                 $"Earned today:  <color=#7fe08a><b>{Ui.Money(shift.earned)}</b></color>\n" +
-                $"Reputation:  {career.rep:0}  ({(repD >= 0 ? "+" : "")}{repD:0})",
+                $"Reputation:  {career.rep:0}  ({(repD >= 0 ? "+" : "")}{repD:0})\n" +
+                $"Time on the floor:  {Mathf.FloorToInt(shiftSeconds / 60)}m {Mathf.FloorToInt(shiftSeconds % 60):00}s",
                 26, Ui.Text);
-            string verdict = shift.handedOver == 0 && shift.late == 0 ? "Spotless. The NOC loves you." : shift.handedOver > 2 ? "The night shift is not happy with you." : "Solid work. Keep the queue moving.";
-            Ui.Label(new Rect(r.x + 52, r.y + 500, 800, 40), verdict, 22, Ui.Accent);
+            string verdict = shift.handedOver == 0 && shift.mistakes == 0 ? "Spotless. The NOC loves you." : shift.handedOver == 0 ? "Everything closed. Nice work." : shift.handedOver > 2 ? "The night shift is not happy with you." : "Close. Try to finish the whole work order.";
+            Ui.Label(new Rect(r.x + 52, r.y + 520, 800, 40), verdict, 22, Ui.Accent);
             if (Ui.Button(new Rect(r.x + 50, r.yMax - 100, 340, 60), "Visit the tech shop", true, 22, Ui.Good)) screen = GameScreen.Shop;
         }
 
@@ -393,7 +412,7 @@ namespace RH
             Ui.Panel(r);
             Ui.Label(new Rect(r.x + 50, r.y + 50, 800, 60), "You've been let go", 46, Ui.Bad, TextAnchor.UpperLeft, true);
             Ui.Label(new Rect(r.x + 52, r.y + 140, 800, 220),
-                $"Your reputation hit zero after {career.day - 1} day{(career.day - 1 == 1 ? "" : "s")}. Too many late tickets, handovers and fumbles.\n\n" +
+                $"Your reputation hit zero after {career.day - 1} day{(career.day - 1 == 1 ? "" : "s")}. Too many unfinished tickets and fumbles.\n\n" +
                 $"Career: {career.ticketsDone} tickets closed, {Ui.Money(career.totalEarned)} earned.", 22, Ui.Text);
             if (Ui.Button(new Rect(r.x + 50, r.yMax - 100, 300, 60), "Main menu", true, 22)) ShowMenu();
         }

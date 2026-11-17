@@ -1,5 +1,6 @@
 using System.Linq;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace RH.Tests
 {
@@ -27,20 +28,28 @@ namespace RH.Tests
                 var k = s.SpawnTicket(t);
                 Assert.IsNotNull(k, t.ToString());
                 Assert.IsNotEmpty(k.tasks, t.ToString());
-                Assert.Greater(k.due, k.created);
                 Assert.Greater(k.pay, 0);
                 Assert.IsNotNull(s.Rack(k.rack));
             }
         }
 
         [Test]
-        public void TicketsArriveOverTheDay()
+        public void WorkOrderIsHandedOutUpFrontAndGrowsWithTheDays()
         {
-            var s = NewShift();
-            int n = 0;
-            s.TicketArrived += t => { n++; t.status = TicketStatus.Done; }; // keep the queue below its cap
-            while (!s.Over) s.Advance(1f);
-            Assert.Greater(n, 8);
+            Assert.AreEqual(4, Shift.QueueSizeFor(1));
+            Assert.AreEqual(8, Shift.QueueSizeFor(5));
+            Assert.AreEqual(12, Shift.QueueSizeFor(30));
+            for (int day = 1; day <= 6; day++)
+            {
+                var s = NewShift(day, day * 13);
+                s.GenerateQueue();
+                Assert.AreEqual(Shift.QueueSizeFor(day), s.tickets.Count, $"day {day}");
+                Assert.IsTrue(s.tickets.All(t => s.Available().Contains(t.type)), $"day {day} only gets unlocked ticket types");
+                Assert.IsFalse(s.AllDone);
+            }
+            var d3 = NewShift(3, 99);
+            d3.GenerateQueue();
+            Assert.IsTrue(d3.tickets.Any(t => t.type == TicketType.NewContract), "the newly unlocked type shows up on its first day");
         }
 
         [Test]
@@ -146,22 +155,45 @@ namespace RH.Tests
         }
 
         [Test]
-        public void LateAndUnfinishedWorkCostsReputation()
+        public void CleanWorkPaysABonusAndMistakesCostIt()
         {
             var s = NewShift();
+            var clean = s.SpawnTicket(TicketType.Firmware);
+            var messy = s.SpawnTicket(TicketType.Firmware);
+            int expectedBase = messy.pay;
+            int money = s.career.money;
+            float cleanMul = s.career.PayMul; // captured before the ticket's own reputation gain
+            foreach (var task in clean.tasks) s.Complete(task);
+            int cleanPay = s.career.money - money;
+            Assert.AreEqual(Mathf.RoundToInt(clean.pay * cleanMul * 1.2f), cleanPay, "fumble-free work pays +20%");
+
             float rep = s.career.rep;
-            var t = s.SpawnTicket(TicketType.Firmware);
-            s.minute = t.due + 10;
-            foreach (var task in t.tasks) s.Complete(task);
-            Assert.Less(s.career.rep, rep);
-            Assert.AreEqual(1, s.late);
+            s.working = messy;
+            s.Mistake("pulled the wrong drive", 5f);
+            Assert.AreEqual(rep - 5f, s.career.rep, 0.001f);
+            Assert.AreEqual(1, messy.mistakes);
+            money = s.career.money;
+            float mul = s.career.PayMul;
+            foreach (var task in messy.tasks) s.Complete(task);
+            Assert.AreEqual(Mathf.RoundToInt(expectedBase * mul), s.career.money - money, "a fumbled ticket pays base rate");
+            Assert.IsTrue(s.AllDone);
+        }
+
+        [Test]
+        public void ClockingOutWithOpenWorkCostsReputation()
+        {
+            var s = NewShift();
+            var done = s.SpawnTicket(TicketType.Firmware);
+            foreach (var task in done.tasks) s.Complete(task);
+            s.SpawnTicket(TicketType.Firmware);
             s.SpawnTicket(TicketType.Firmware);
             float before = s.career.rep;
             int day = s.career.day;
             s.End();
-            Assert.Less(s.career.rep, before);
-            Assert.AreEqual(1, s.handedOver);
+            Assert.AreEqual(before - 8f, s.career.rep, 0.001f);
+            Assert.AreEqual(2, s.handedOver);
             Assert.AreEqual(day + 1, s.career.day);
+            Assert.IsFalse(s.OpenTickets.Any());
         }
 
         [Test]

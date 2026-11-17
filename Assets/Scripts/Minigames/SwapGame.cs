@@ -85,9 +85,9 @@ namespace RH
                         if (Slot(i).Contains(m))
                         {
                             if (i == bad) { step = 1; Audio.Play("beep"); }
-                            else if (mode == SwapMode.Drive) Oops("You pulled a HEALTHY drive. The RAID array is now critical and the customer saw I/O errors", 4, 2);
-                            else if (mode == SwapMode.Psu) Oops("That PSU was carrying the whole server. It just lost power!", 6, 3);
-                            else Oops("Wrong optic: you cut a working link", 2, 1);
+                            else if (mode == SwapMode.Drive) Oops("You pulled a HEALTHY drive. The RAID array is now critical and the customer saw I/O errors", 5);
+                            else if (mode == SwapMode.Psu) Oops("That PSU was carrying the whole server. It just lost power!", 7.5f);
+                            else Oops("Wrong optic: you cut a working link", 2.5f);
                             Hint();
                             break;
                         }

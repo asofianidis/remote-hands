@@ -4,9 +4,10 @@ A first-person data center technician game, spun off from *Uptime: Data Center T
 In data centers, "remote hands" is the on-site service customers pay for when they need someone
 to physically rack, cable, swap or reboot their gear. In this game, that someone is you.
 
-Tickets pour into the queue all shift. Each one names a rack and the hands-on jobs to do there.
-Collect equipment from the storage room or the loading dock, walk the hall, and do the work
-yourself through a minigame for every task.
+Each shift starts with a work order on your tablet: four tickets on day one, one more every day
+after (up to twelve). Each ticket names a rack and the hands-on jobs to do there. Collect equipment
+from the storage room or the loading dock, walk the hall, and do the work yourself through a
+minigame for every task. There is no clock: the shift ends when you clock out.
 
 ## Ticket types
 
@@ -30,8 +31,10 @@ yourself through a minigame for every task.
 - **Diagnose**: read the kernel log and BMC health to find the root cause.
 - **Power-cycle**: hold the power button through a hard reset, then boot from the right device.
 
-Late tickets pay half. Unfinished tickets are handed to the night shift and cost reputation.
-Mistakes such as pulling a healthy drive or plugging into the wrong port cost time and reputation.
+Clock out from the tablet (or the NOC desk) when you're done. Anything unfinished is handed to the
+night shift and costs reputation, so the goal is to finish the whole work order. Mistakes such as
+pulling a healthy drive or plugging into the wrong port cost reputation, and a ticket finished
+without a single mistake pays a 20% clean-work bonus.
 If your reputation hits zero you're fired. Spend your pay between shifts on tools in the tech shop.
 
 ## Controls

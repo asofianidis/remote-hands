@@ -20,8 +20,10 @@ namespace RH
         public string currentRack;
         public int selectedTicket, trackedTicket;
         GameScreen pausedFrom;
-
-        public static float MinutesPerSecond = 1f;
+        /// <summary>Set when the player asked to clock out with work still open, to show the confirmation.</summary>
+        public bool confirmClockOut;
+        /// <summary>Real time spent on the floor this shift (just for the summary; nothing is timed).</summary>
+        public float shiftSeconds;
 
         class ToastMsg { public string text; public int sev; public float time; }
         readonly List<ToastMsg> toasts = new List<ToastMsg>();
@@ -32,7 +34,6 @@ namespace RH
             Application.targetFrameRate = 144;
             Player.Sensitivity = PlayerPrefs.GetFloat("sens", 2.2f);
             Audio.Volume = PlayerPrefs.GetFloat("vol", 0.8f);
-            MinutesPerSecond = PlayerPrefs.GetFloat("pace", 1f);
             gameObject.AddComponent<Audio>();
             facility = new GameObject("Facility").AddComponent<Facility>();
             player = new GameObject("Player").AddComponent<Player>();
@@ -68,28 +69,35 @@ namespace RH
         {
             screen = GameScreen.Briefing;
             shift = new Shift(career, 7919 * career.day + 17);
-            shift.TicketArrived += OnTicket;
+            shift.GenerateQueue();
             shift.Message += (t, s) => Toast(t, s);
-            shift.TicketDone += t => { facility.RefreshAll(shift); if (trackedTicket == t.id) trackedTicket = 0; };
+            shift.TicketDone += t =>
+            {
+                facility.RefreshAll(shift);
+                if (trackedTicket == t.id) trackedTicket = shift.OpenTickets.FirstOrDefault()?.id ?? 0;
+                if (shift.AllDone) Audio.Play("ticket");
+            };
             facility.Build(shift);
+            facility.SpawnDeliveries(shift);
             player.Teleport(Facility.Spawn, 15f);
-            selectedTicket = trackedTicket = 0;
+            selectedTicket = trackedTicket = shift.tickets.FirstOrDefault()?.id ?? 0;
+            confirmClockOut = false;
+            shiftSeconds = 0f;
             toasts.Clear();
         }
 
         public void ClockIn() => screen = GameScreen.Play;
 
-        void OnTicket(Ticket t)
+        /// <summary>The shift ends when the player says so. With work left open, ask first.</summary>
+        public void ClockOut()
         {
-            Audio.Play("ticket");
-            Toast($"New ticket #{t.id}: {t.title}", 0);
-            if (trackedTicket == 0 || shift.tickets.Find(x => x.id == trackedTicket)?.Open != true) trackedTicket = t.id;
-            if (selectedTicket == 0) selectedTicket = t.id;
-            facility.Refresh(shift, t.rack);
+            if (!shift.AllDone && !confirmClockOut) { confirmClockOut = true; return; }
+            EndShift();
         }
 
         void EndShift()
         {
+            confirmClockOut = false;
             minigame = null;
             shift.End();
             if (shift.Fired)
@@ -120,10 +128,10 @@ namespace RH
             bool working = screen == GameScreen.Play || screen == GameScreen.Tablet || screen == GameScreen.Rack || screen == GameScreen.Minigame;
             if (working && shift != null)
             {
-                shift.Advance(dt * MinutesPerSecond);
+                shiftSeconds += dt;
                 facility.SpawnDeliveries(shift);
-                if (shift.Over && screen != GameScreen.Minigame) { EndShift(); return; }
             }
+            if (screen != GameScreen.Tablet) confirmClockOut = false;
             HandleInput();
             if (screen == GameScreen.Minigame && minigame != null)
             {
@@ -134,7 +142,7 @@ namespace RH
                     if (minigame.success) shift.Complete(t);
                     facility.Refresh(shift, t.rack);
                     minigame = null;
-                    screen = shift.Over ? GameScreen.Play : GameScreen.Rack;
+                    screen = GameScreen.Rack;
                 }
             }
             player.inputEnabled = screen == GameScreen.Play;
@@ -365,9 +373,11 @@ namespace RH
             }
             minigame = null;
             screen = GameScreen.Play;
-            shift.minute = Shift.EndMin;
-            yield return null;
-            yield return null;
+            confirmClockOut = false;
+            OpenTablet();
+            ClockOut();
+            yield return Shot($"{n++:00}_clockout_confirm");
+            ClockOut();
             yield return Shot($"{n++:00}_summary");
             screen = GameScreen.Shop;
             yield return Shot($"{n++:00}_shop");

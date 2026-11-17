@@ -97,7 +97,7 @@ namespace RH
                     {
                         s.connected = false;
                         Audio.Play("plug");
-                        if (!s.loose) Oops($"{s.name} was a healthy link. You just knocked {Dev.owner} offline on it", 2, 0);
+                        if (!s.loose) Oops($"{s.name} was a healthy link. You just knocked {Dev.owner} offline on it", 2);
                         s.loose = false;
                         dragging = s;
                     }
@@ -111,7 +111,7 @@ namespace RH
                     dragging.connected = true;
                     Audio.Play("plug");
                 }
-                else if (d != null) Oops($"Wrong port: {dragging.name} goes to {Pretty(dragging.dest)}, not {Pretty(d.id)}", 0, 1);
+                else if (d != null) Oops($"Wrong port: {dragging.name} goes to {Pretty(dragging.dest)}, not {Pretty(d.id)}", 0.5f);
                 dragging = null;
             }
             if (srcs.All(s => s.connected && !s.loose)) Win(reseat ? "Link is back up. The customer is online again." : $"{def.name} cabled and powered on.");

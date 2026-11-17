@@ -39,6 +39,7 @@ namespace RH
         {
             game = g;
             task = t;
+            g.shift.working = g.shift.TicketOf(t);
             Begin();
         }
 
@@ -62,10 +63,10 @@ namespace RH
             if (!string.IsNullOrEmpty(msg)) game.Toast(msg, 1);
         }
 
-        protected void Oops(string msg, float rep, float minutes)
+        protected void Oops(string msg, float rep)
         {
             Audio.Play("bad");
-            shift.Mistake(msg, rep, minutes);
+            shift.Mistake(msg, rep);
         }
 
         protected static bool Pressed => Input.GetMouseButtonDown(0);
@@ -79,7 +80,7 @@ namespace RH
             Ui.Panel(p);
             Ui.Box(new Rect(p.x, p.y, p.width, 64), Ui.Bg2);
             Ui.Label(new Rect(p.x + 24, p.y + 10, p.width - 320, 44), title, 26, Ui.Text, TextAnchor.MiddleLeft, true, false);
-            Ui.Label(new Rect(p.xMax - 300, p.y + 10, 276, 44), $"{shift.Clock}   [Esc] step away", 18, Ui.Dim, TextAnchor.MiddleRight);
+            Ui.Label(new Rect(p.xMax - 300, p.y + 10, 276, 44), "[Esc] step away", 18, Ui.Dim, TextAnchor.MiddleRight);
             Ui.Label(new Rect(p.x + 24, p.yMax - 52, p.width - 48, 40), hint, 18, Ui.Warn, TextAnchor.MiddleLeft);
         }
     }
@@ -132,7 +133,7 @@ namespace RH
                             push = 0;
                             misalign = 0;
                             Audio.Play("clunk");
-                            Oops("The unit jammed on the rails. Pull it back and line it up", 0, 1);
+                            Oops("The unit jammed on the rails. Pull it back and line it up", 0.5f);
                         }
                     }
                     else misalign = 0;

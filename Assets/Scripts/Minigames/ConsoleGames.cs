@@ -56,7 +56,7 @@ namespace RH
                 progress = 0;
                 instability = 0;
                 log.Add("!! write verify failed, rolling back to backup image");
-                Oops("Voltage glitch: the flash failed and rolled back. Starting over", 0, 2);
+                Oops("Voltage glitch: the flash failed and rolled back. Starting over", 1);
             }
             nextLog -= dt;
             if (nextLog <= 0 && ok)
@@ -95,7 +95,7 @@ namespace RH
                             log.Add($"$ fwupdate --component {task.component.ToLowerInvariant()} {img}");
                             log.Add("image signature ok, model match ok");
                         }
-                        else Oops($"Image rejected: {Why(img)}", 0, 1.5f);
+                        else Oops($"Image rejected: {Why(img)}", 0.75f);
                     }
                 }
                 Ui.Label(new Rect(p.x + 720, p.y + 214, 500, 300),
@@ -220,7 +220,7 @@ namespace RH
                 if (Ui.Button(new Rect(p.x + 810, p.y + 362 + i * 56, 440, 46), label, true, 18))
                 {
                     if (f != Fault.None && f == fault) Win($"Root cause found: {Shift.FaultName(fault)}.");
-                    else Oops($"Wrong diagnosis: it wasn't \"{label}\"", 1, 3);
+                    else Oops($"Wrong diagnosis: it wasn't \"{label}\"", 2.5f);
                 }
             }
         }
@@ -296,7 +296,7 @@ namespace RH
                         if (Ui.Button(new Rect(scr.x + 20, scr.y + 244 + i * 54, 460, 44), boot[i], true, 18))
                         {
                             if (boot[i] == Correct) { phase = 3; timer = 0; hint = "Booting..."; }
-                            else { Oops($"Booted from {boot[i]}: wrong device. Reboot and try again", 0, 2); phase = 1; timer = 0; }
+                            else { Oops($"Booted from {boot[i]}: wrong device. Reboot and try again", 1); phase = 1; timer = 0; }
                         }
                 }
                 if (phase == 3) Ui.Label(new Rect(scr.x + 20, scr.y + 220, scr.width - 40, 60), "Booting Linux 6.8.0 ...", 20, Ui.Good);

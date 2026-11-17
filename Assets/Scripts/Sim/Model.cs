@@ -90,7 +90,7 @@ namespace RH
 
     public class Ticket
     {
-        public int id, created, due, pay, finished;
+        public int id, pay, mistakes;
         public TicketType type;
         public string customer, title, body, rack;
         public TicketStatus status;
@@ -144,7 +144,7 @@ namespace RH
     [Serializable]
     public class Career
     {
-        public int day = 1, money, ticketsDone, ticketsLate, handedOver, totalEarned, bestDay;
+        public int day = 1, money, ticketsDone, handedOver, totalEarned, bestDay;
         public float rep = 50f;
         public List<string> upgrades = new List<string>();
 

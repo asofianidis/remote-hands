@@ -11,7 +11,6 @@ namespace RH
     /// </summary>
     public class Shift
     {
-        public const int StartMin = 8 * 60, EndMin = 17 * 60;
         public static readonly string[] Rows = { "A", "B", "C", "D" };
         public const int RacksPerRow = 10;
 
@@ -30,11 +29,11 @@ namespace RH
         /// <summary>Customer shipments waiting to be placed on the loading dock by the world.</summary>
         public readonly List<Item> deliveries = new List<Item>();
         public readonly System.Random rng;
-        public float minute = StartMin;
-        public float nextTicket;
         int nextId = 1, nextTicketId = 101;
 
-        public int earned, completed, late, mistakes, handedOver;
+        public int earned, completed, mistakes, handedOver;
+        /// <summary>The ticket being worked on, so fumbles count against its clean-work bonus.</summary>
+        public Ticket working;
         public float repStart;
 
         public event Action<Ticket> TicketArrived;
@@ -42,10 +41,9 @@ namespace RH
         /// <summary>Message to show the player: text and severity (0 info, 1 good, 2 warn, 3 bad).</summary>
         public event Action<string, int> Message;
 
-        public bool Over => minute >= EndMin;
-        public string Clock => FormatTime(minute);
-        public static string FormatTime(float m) { int t = Mathf.FloorToInt(m); return $"{t / 60:00}:{t % 60:00}"; }
         public IEnumerable<Ticket> OpenTickets => tickets.Where(t => t.Open);
+        public bool AllDone => tickets.Count > 0 && !OpenTickets.Any();
+        public int DoneCount => tickets.Count(t => t.status == TicketStatus.Done);
 
         public Shift(Career career, int seed)
         {
@@ -55,7 +53,6 @@ namespace RH
             inv.handCap = career.Has("cart") ? 2 : 1;
             inv.pouchCap = career.Has("belt") ? 6 : 4;
             BuildRacks();
-            nextTicket = StartMin + 4;
         }
 
         // ================================================================ hall
@@ -109,21 +106,18 @@ namespace RH
         public IEnumerable<(Ticket ticket, WorkTask task)> TasksAt(string rack) =>
             OpenTickets.SelectMany(k => k.tasks.Where(t => t.rack == rack).Select(t => (k, t)));
 
-        // ================================================================ clock & ticket arrival
-        public void Advance(float minutes)
-        {
-            minute += minutes;
-            while (minute >= nextTicket && nextTicket < EndMin - 40)
-            {
-                if (OpenTickets.Count() < 7) SpawnTicket();
-                nextTicket += Interval();
-            }
-        }
+        // ================================================================ the day's work order
+        /// <summary>Tickets in today's work order: 4 on day one, one more each day, up to 12.</summary>
+        public int QueueSize => QueueSizeFor(career.day);
+        public static int QueueSizeFor(int day) => Mathf.Min(12, 3 + day);
 
-        float Interval()
+        /// <summary>Hand out the whole day's work at clock-in. There is no clock: the shift ends when the player clocks out.</summary>
+        public void GenerateQueue()
         {
-            float baseMin = Mathf.Lerp(34f, 15f, Mathf.Clamp01((career.day - 1) / 8f));
-            return baseMin * (0.7f + (float)rng.NextDouble() * 0.6f);
+            var types = Available();
+            // Make sure the newest ticket type shows up on the day it unlocks.
+            if (career.day <= 3) SpawnTicket(types[types.Count - 1]);
+            for (int guard = 0; tickets.Count < QueueSize && guard < QueueSize * 4; guard++) SpawnTicket();
         }
 
         public List<TicketType> Available()
@@ -152,11 +146,8 @@ namespace RH
             return null;
         }
 
-        Ticket NewTicket(TicketType type, Rack rack, string customer, int dueMin, int pay)
-        {
-            int now = Mathf.FloorToInt(minute);
-            return new Ticket { id = nextTicketId++, type = type, rack = rack.label, customer = customer, created = now, due = now + dueMin, pay = pay };
-        }
+        Ticket NewTicket(TicketType type, Rack rack, string customer, int pay) =>
+            new Ticket { id = nextTicketId++, type = type, rack = rack.label, customer = customer, pay = pay };
 
         T Pick<T>(IList<T> l) => l[rng.Next(l.Count)];
 
@@ -181,7 +172,7 @@ namespace RH
             if (candidates.Count == 0) return null;
             var rack = Pick(candidates);
             int n = 1 + rng.Next(customerGear ? 3 : 3);
-            var t = NewTicket(type, rack, rack.owner, 0, 0);
+            var t = NewTicket(type, rack, rack.owner, 0);
             var placed = new List<string>();
             for (int i = 0; i < n; i++)
             {
@@ -202,14 +193,12 @@ namespace RH
             {
                 t.title = $"Rack {rack.owner}'s delivery ({items} item{(items > 1 ? "s" : "")}) in {rack.label}";
                 t.body = $"{rack.owner} shipped their own equipment. It is waiting on the loading dock. Rack and cable it in {rack.label}:\n- " + string.Join("\n- ", placed);
-                t.due = t.created + 120 + 25 * items;
                 t.pay = 55 + 45 * items;
             }
             else
             {
                 t.title = $"Expand {rack.owner}: install {items} server{(items > 1 ? "s" : "")} in {rack.label}";
                 t.body = $"{rack.owner} is adding capacity. Collect the servers from the storage room, then rack and cable them in {rack.label}:\n- " + string.Join("\n- ", placed);
-                t.due = t.created + 110 + 25 * items;
                 t.pay = 40 + 45 * items;
             }
             return t;
@@ -230,7 +219,7 @@ namespace RH
             if (dev.Def.sfps > 0) faults.Add(Fault.BadSfp);
             dev.fault = Pick(faults);
             if (dev.fault == Fault.BadSfp) dev.badSfp = rng.Next(dev.Def.sfps);
-            var t = NewTicket(TicketType.FixIssue, rack, dev.owner, 60 + rng.Next(30), 110);
+            var t = NewTicket(TicketType.FixIssue, rack, dev.owner, 110);
             dev.ticket = t.id;
             string symptom = dev.fault == Fault.Hung ? "stopped responding to pings and SSH" : "is unreachable on the network";
             t.title = $"{dev.owner}: {dev.Def.name} down in {rack.label} U{dev.u}";
@@ -246,7 +235,7 @@ namespace RH
             if (devs.Count == 0) return null;
             var dev = Pick(devs);
             var rack = RackOf(dev);
-            var t = NewTicket(TicketType.ReplaceHardware, rack, dev.owner, 75 + rng.Next(30), 85);
+            var t = NewTicket(TicketType.ReplaceHardware, rack, dev.owner, 85);
             dev.ticket = t.id;
             if (drive)
             {
@@ -276,7 +265,7 @@ namespace RH
             var model = Pick(list.Select(d => d.def).Distinct().ToList());
             var devs = list.Where(d => d.def == model).Take(2 + rng.Next(3)).ToList();
             if (devs.Count == 0) return null;
-            var t = NewTicket(TicketType.Firmware, rack, rack.owner, 100 + 15 * devs.Count, 25 + 30 * devs.Count);
+            var t = NewTicket(TicketType.Firmware, rack, rack.owner, 25 + 30 * devs.Count);
             foreach (var d in devs)
             {
                 d.ticket = t.id;
@@ -297,7 +286,7 @@ namespace RH
             var cust = Pick(Catalog.Customers).name;
             rack.owner = cust;
             int servers = 2 + rng.Next(3);
-            var t = NewTicket(TicketType.NewContract, rack, cust, 0, 0);
+            var t = NewTicket(TicketType.NewContract, rack, cust, 0);
             var plan = new List<(string def, int u)> { ("sw48", 42) };
             int u = 1;
             for (int i = 0; i < servers; i++)
@@ -315,7 +304,6 @@ namespace RH
             t.title = $"New contract: build out {rack.label} for {cust}";
             t.body = $"{cust} signed for rack {rack.label}. Install a top-of-rack switch at U42 and {servers} servers from the bottom up, then cable everything:\n- " +
                      string.Join("\n- ", plan.Select(p => $"{Catalog.Dev(p.def).name} at U{p.u}"));
-            t.due = t.created + 200 + 20 * servers;
             t.pay = 180 + 50 * servers;
             return t;
         }
@@ -399,33 +387,30 @@ namespace RH
             _ => "none",
         };
 
+        /// <summary>Pay out a finished ticket. Work done without a single fumble earns a 20% clean-work bonus.</summary>
         void FinishTicket(Ticket t)
         {
-            int now = Mathf.FloorToInt(minute);
-            bool isLate = now > t.due;
-            bool fast = now <= t.created + (t.due - t.created) / 2;
-            int pay = Mathf.RoundToInt(t.pay * career.PayMul * (isLate ? 0.5f : 1f) * (fast ? 1.2f : 1f));
+            bool clean = t.mistakes == 0;
+            int pay = Mathf.RoundToInt(t.pay * career.PayMul * (clean ? 1.2f : 1f));
             t.status = TicketStatus.Done;
-            t.finished = now;
             foreach (var r in racks) foreach (var d in r.devices) if (d.ticket == t.id) d.ticket = 0;
             earned += pay;
             career.money += pay;
             career.totalEarned += pay;
             completed++;
             career.ticketsDone++;
-            if (isLate) { late++; career.ticketsLate++; }
-            ChangeRep(isLate ? -3f : fast ? 3f : 2f);
-            Message?.Invoke($"Ticket #{t.id} closed: +${pay}" + (isLate ? " (late, half pay)" : fast ? " (fast bonus!)" : ""), isLate ? 2 : 1);
+            ChangeRep(clean ? 3f : 2f);
+            Message?.Invoke($"Ticket #{t.id} closed: +${pay}" + (clean ? " (clean work bonus!)" : "") + (AllDone ? ". That's the whole work order: clock out from your tablet." : ""), 1);
             TicketDone?.Invoke(t);
         }
 
-        /// <summary>Penalty for fumbling a job: lost time and/or reputation.</summary>
-        public void Mistake(string what, float rep, float minutes)
+        /// <summary>Penalty for fumbling a job: it costs reputation and the ticket's clean-work bonus.</summary>
+        public void Mistake(string what, float rep)
         {
             mistakes++;
-            if (minutes > 0) Advance(minutes);
+            if (working != null) working.mistakes++;
             ChangeRep(-rep);
-            Message?.Invoke(what + (minutes > 0 ? $" (-{minutes:0} min)" : "") + (rep > 0 ? $" (-{rep:0} rep)" : ""), 3);
+            Message?.Invoke(what + (rep > 0 ? $" (-{rep:0.#} rep)" : ""), 3);
         }
 
         public void ChangeRep(float d) => career.rep = Mathf.Clamp(career.rep + d, 0f, 100f);

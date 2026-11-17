@@ -145,7 +145,7 @@ namespace RH
 
     public class Terminal : Interactable
     {
-        public override string Prompt(Game g) => "[E] Open the ticket queue";
+        public override string Prompt(Game g) => g.shift.AllDone ? "[E] Work order complete: clock out" : "[E] Open the ticket queue";
         public override void Use(Game g) => g.OpenTablet();
     }
 }
