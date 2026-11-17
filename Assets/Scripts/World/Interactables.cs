@@ -31,9 +31,15 @@ namespace RH
             Mats.Box(t, new Vector3(Width / 2 - 0.01f, Height / 2, 0), new Vector3(0.02f, Height, Depth), frame);
             Mats.Box(t, new Vector3(0, Height - 0.01f, 0), new Vector3(Width, 0.02f, Depth), frame);
             Mats.Box(t, new Vector3(0, 0.05f, 0), new Vector3(Width, 0.1f, Depth), frame);
-            Mats.Box(t, new Vector3(0, Height / 2, Depth / 2 - 0.01f), new Vector3(Width, Height, 0.02f), Mats.Lit(new Color(0.03f, 0.03f, 0.035f)));
+            // The rear is open: posts, a red A-feed PDU and a blue B-feed PDU down the back corners.
             foreach (float x in new[] { -0.255f, 0.255f })
+            {
                 Mats.Box(t, new Vector3(x, Height / 2, -Depth / 2 + 0.04f), new Vector3(0.025f, Height - 0.1f, 0.02f), post);
+                Mats.Box(t, new Vector3(x, Height / 2, Depth / 2 - 0.04f), new Vector3(0.025f, Height - 0.1f, 0.02f), post);
+            }
+            Mats.Box(t, new Vector3(-0.22f, 1.05f, Depth / 2 - 0.07f), new Vector3(0.05f, 1.8f, 0.05f), Mats.Lit(new Color(0.55f, 0.12f, 0.1f), 0.3f, 0.3f), false, true, "PDU A");
+            Mats.Box(t, new Vector3(0.22f, 1.05f, Depth / 2 - 0.07f), new Vector3(0.05f, 1.8f, 0.05f), Mats.Lit(new Color(0.12f, 0.2f, 0.55f), 0.3f, 0.3f), false, true, "PDU B");
+            Mats.Text(t, new Vector3(0, Height + 0.09f, Depth / 2 - 0.05f), label + "  REAR", 0.09f, new Color(1f, 0.75f, 0.6f), TextAnchor.MiddleCenter, 180f);
             var col = gameObject.AddComponent<BoxCollider>();
             col.center = new Vector3(0, Height / 2, 0);
             col.size = new Vector3(Width, Height, Depth);
@@ -70,10 +76,18 @@ namespace RH
                         if (bad) blinkers.Add(led.GetComponent<Renderer>());
                     }
                 }
-                bool alarm = d.failedPsu >= 0 || d.fault != Fault.None;
+                bool off = d.fault == Fault.NoPower;
+                bool alarm = !off && (d.failedPsu >= 0 || d.fault != Fault.None);
                 var pwr = Mats.Box(content, new Vector3(0.21f, y, front - 0.014f), new Vector3(0.012f, 0.012f, 0.004f),
-                    alarm ? Mats.Unlit(new Color(1f, 0.15f, 0.1f)) : Mats.Unlit(new Color(0.3f, 0.6f, 1f)), false, false);
+                    off ? Mats.Unlit(new Color(0.05f, 0.05f, 0.05f)) : alarm ? Mats.Unlit(new Color(1f, 0.15f, 0.1f)) : Mats.Unlit(new Color(0.3f, 0.6f, 1f)), false, false);
                 if (alarm) blinkers.Add(pwr.GetComponent<Renderer>());
+                BuildRear(d, y, h, front + 0.9f);
+            }
+            if (rack.devices.Count > 0)
+            {
+                // Data cables gathered into a bundle running up to the overhead tray.
+                float lowY = UY(rack.devices.Min(d => d.u));
+                Mats.Box(content, new Vector3(-0.15f, (lowY + Height) / 2f, Depth / 2 - 0.1f), new Vector3(0.05f, Height - lowY, 0.04f), Mats.Lit(new Color(0.2f, 0.45f, 0.85f), 0.3f), false, false, "cable bundle");
             }
             // Ghost markers where open tickets want equipment installed.
             foreach (var (ticket, task) in shift.TasksAt(rack.label))
@@ -84,6 +98,31 @@ namespace RH
                 Mats.Box(content, new Vector3(0, UY(task.u) + h / 2, front + 0.1f), new Vector3(0.5f, h - 0.004f, 0.2f), Mats.Glass(new Color(1f, 0.7f, 0.15f, 0.35f)), false, false);
             }
             beacon.SetActive(shift.TasksAt(rack.label).Any(x => !x.task.done));
+        }
+
+        /// <summary>The back of a unit: its PSUs with status lights, a port block and the two power cords.</summary>
+        void BuildRear(Device d, float y, float h, float back)
+        {
+            float z = back + 0.006f;
+            Mats.Box(content, new Vector3(0, y, z), new Vector3(0.5f, h * 0.86f, 0.01f), Mats.Lit(d.Def.color * 0.8f, 0.3f, 0.3f), false, false);
+            if (d.Def.kind == DevKind.Switch || d.Def.ports.Length > 3)
+                Mats.Box(content, new Vector3(-0.08f, y, z + 0.008f), new Vector3(0.16f, Mathf.Min(h * 0.6f, 0.03f), 0.008f), Mats.Lit(new Color(0.05f, 0.05f, 0.06f)), false, false);
+            for (int i = 0; i < d.Def.psus; i++)
+            {
+                float px = 0.1f + i * 0.09f;
+                float ph = Mathf.Min(h * 0.75f, 0.035f);
+                Mats.Box(content, new Vector3(px, y, z + 0.008f), new Vector3(0.075f, ph, 0.008f), Mats.Lit(new Color(0.3f, 0.31f, 0.33f), 0.4f, 0.5f), false, false);
+                bool failed = d.failedPsu == i;
+                bool off = d.fault == Fault.NoPower;
+                var led = Mats.Box(content, new Vector3(px + 0.028f, y, z + 0.014f), new Vector3(0.008f, 0.008f, 0.004f),
+                    Mats.Unlit(off ? new Color(0.05f, 0.05f, 0.05f) : failed ? new Color(1f, 0.15f, 0.1f) : new Color(0.2f, 0.9f, 0.3f)), false, false);
+                if (failed) blinkers.Add(led.GetComponent<Renderer>());
+                // Cord to the PDU on its side: PSU 1 to the red A feed, PSU 2 to the blue B feed.
+                float pdx = i == 0 ? -0.22f : 0.22f;
+                if (!failed)
+                    Mats.Box(content, new Vector3((px + pdx) / 2f, y - 0.006f, Depth / 2 - 0.07f), new Vector3(Mathf.Abs(px - pdx), 0.008f, 0.008f),
+                        Mats.Lit(i == 0 ? new Color(0.6f, 0.15f, 0.12f) : new Color(0.15f, 0.25f, 0.6f)), false, false);
+            }
         }
 
         void Update()
@@ -97,8 +136,14 @@ namespace RH
         {
             var rack = g.shift.Rack(label);
             string owner = rack.owner != null ? rack.owner : "vacant";
-            int open = g.shift.TasksAt(label).Count(x => !x.task.done);
-            return $"[E] Work on rack {label} ({owner})" + (open > 0 ? $"  -  {open} task{(open > 1 ? "s" : "")} here" : "");
+            bool rear = g.facility.IsBehind(label, g.player.transform.position);
+            var open = g.shift.TasksAt(label).Where(x => !x.task.done && x.task.kind != TaskKind.Photo).ToList();
+            int here = open.Count(x => Shift.RearJob(x.task.kind) == rear);
+            int other = open.Count - here;
+            string side = rear ? "rear" : "front";
+            return $"[{Keys.Label(Keys.Action.Interact)}] Work on rack {label} {side} ({owner})" +
+                   (here > 0 ? $"  -  {here} task{(here > 1 ? "s" : "")} here" : "") +
+                   (other > 0 ? $"  -  {other} on the {(rear ? "front" : "rear")}" : "");
         }
 
         public override void Use(Game g) => g.OpenRack(label);
@@ -115,8 +160,9 @@ namespace RH
 
         public override string Prompt(Game g)
         {
-            if (isPart) return g.shift.inv.PouchFull ? $"Tool pouch full ({g.shift.inv.pouchCap})" : $"[E] Take a {ItemName}";
-            return g.shift.inv.HandsFull ? "Your hands are full. Return or install what you're carrying first" : $"[E] Take a {ItemName}";
+            string e = Keys.Label(Keys.Action.Interact);
+            if (isPart) return g.shift.inv.PouchFull ? $"Tool pouch full ({g.shift.inv.pouchCap})" : $"[{e}] Take a {ItemName}";
+            return g.shift.inv.HandsFull ? "Your hands are full. Return or install what you're carrying first" : $"[{e}] Take the {ItemName}";
         }
 
         public override void Use(Game g) => g.TakeStock(this);
@@ -126,7 +172,7 @@ namespace RH
     public class Pickup : Interactable
     {
         public Item item;
-        public override string Prompt(Game g) => g.shift.inv.HandsFull ? "Your hands are full" : $"[E] Pick up {item.label}";
+        public override string Prompt(Game g) => g.shift.inv.HandsFull ? "Your hands are full" : $"[{Keys.Label(Keys.Action.Interact)}] Pick up {item.label}";
         public override void Use(Game g) => g.PickUp(this);
     }
 
@@ -135,8 +181,15 @@ namespace RH
         public override string Prompt(Game g)
         {
             var inv = g.shift.inv;
-            if (inv.hands.Count > 0) return inv.hands[inv.hands.Count - 1].tag != null ? "Customer equipment can't go back into stock" : $"[E] Return {inv.hands[inv.hands.Count - 1].Def.name} to stock";
-            if (inv.pouch.Count > 0) return $"[E] Return {Catalog.PartName(inv.pouch[inv.pouch.Count - 1])} to stock";
+            string e = Keys.Label(Keys.Action.Interact);
+            if (inv.hands.Count > 0)
+            {
+                var it = inv.hands[inv.hands.Count - 1];
+                if (it.CustomerGear) return "Customer equipment can't go back into stock";
+                if (it.Decom) return "Decommissioned units go to the wipe station, then the outbound pallet";
+                return $"[{e}] Return {it.Def.name} to stock";
+            }
+            if (inv.pouch.Count > 0) return $"[{e}] Return {Catalog.PartName(inv.pouch[inv.pouch.Count - 1])} to stock";
             return "Returns bin (nothing to return)";
         }
 
@@ -145,7 +198,21 @@ namespace RH
 
     public class Terminal : Interactable
     {
-        public override string Prompt(Game g) => g.shift.AllDone ? "[E] Work order complete: clock out" : "[E] Open the ticket queue";
+        public override string Prompt(Game g) => $"[{Keys.Label(Keys.Action.Interact)}] " + (g.shift.AllDone ? "Work order complete: clock out" : "Open the ticket queue");
         public override void Use(Game g) => g.OpenTablet();
+    }
+
+    /// <summary>A place jobs happen away from the racks: the wipe bench, the outbound pallet, the meet-me room.</summary>
+    public class Station : Interactable
+    {
+        public string id, title;
+
+        public override string Prompt(Game g)
+        {
+            int open = g.shift.TasksAtStation(id).Count(x => !x.task.done);
+            return $"[{Keys.Label(Keys.Action.Interact)}] {title}" + (open > 0 ? $"  -  {open} task{(open > 1 ? "s" : "")} here" : "");
+        }
+
+        public override void Use(Game g) => g.OpenStation(id);
     }
 }

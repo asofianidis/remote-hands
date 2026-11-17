@@ -10,6 +10,7 @@ namespace RH
         public Interactable focus;
         public bool inputEnabled;
         public static float Sensitivity = 2.2f;
+        public static float Fov = 72f;
 
         CharacterController cc;
         float yaw, pitch, vy, bob;
@@ -57,15 +58,17 @@ namespace RH
         public void Tick(Game g, float dt)
         {
             var inv = g.shift?.inv;
+            cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, g.cameraUp ? Fov * 0.8f : Fov, dt * 10f);
             if (inputEnabled)
             {
                 yaw += Input.GetAxisRaw("Mouse X") * Sensitivity;
                 pitch = Mathf.Clamp(pitch - Input.GetAxisRaw("Mouse Y") * Sensitivity, -85f, 85f);
                 Apply();
-                var move = new Vector3((Input.GetKey(KeyCode.D) ? 1 : 0) - (Input.GetKey(KeyCode.A) ? 1 : 0), 0, (Input.GetKey(KeyCode.W) ? 1 : 0) - (Input.GetKey(KeyCode.S) ? 1 : 0));
+                var move = new Vector3((Keys.Held(Keys.Action.Right) ? 1 : 0) - (Keys.Held(Keys.Action.Left) ? 1 : 0), 0, (Keys.Held(Keys.Action.Forward) ? 1 : 0) - (Keys.Held(Keys.Action.Back) ? 1 : 0));
                 move = Vector3.ClampMagnitude(move, 1f);
-                bool sprint = Input.GetKey(KeyCode.LeftShift);
-                float speed = (sprint ? 5.4f : 3.3f) * (g.career.Has("shoes") ? 1.25f : 1f) * (inv != null && inv.hands.Count > 0 ? 0.82f : 1f);
+                bool sprint = Keys.Held(Keys.Action.Sprint);
+                float shoes = g.career.Has("shoes2") ? 1.45f : g.career.Has("shoes") ? 1.25f : 1f;
+                float speed = (sprint ? 5.4f : 3.3f) * shoes * (inv != null && inv.hands.Count > 0 ? 0.82f : 1f);
                 var world = transform.TransformDirection(move) * speed;
                 vy = cc.isGrounded ? -1f : vy - 18f * dt;
                 cc.Move((world + Vector3.up * vy) * dt);
@@ -74,7 +77,7 @@ namespace RH
             }
 
             focus = null;
-            if (inputEnabled && Physics.Raycast(cam.transform.position, cam.transform.forward, out var hit, 2.6f))
+            if (inputEnabled && !g.cameraUp && Physics.Raycast(cam.transform.position, cam.transform.forward, out var hit, 2.6f))
                 focus = hit.collider.GetComponentInParent<Interactable>();
 
             if (inv != null) SyncHeld(inv);
@@ -92,7 +95,7 @@ namespace RH
             foreach (var it in inv.hands)
             {
                 float h = it.Def.heightU * 0.0445f;
-                bool boxed = it.tag != null;
+                bool boxed = it.CustomerGear;
                 var g = Mats.Box(heldRoot, new Vector3(0, y + h / 2, 0), new Vector3(0.5f, boxed ? h + 0.08f : h, 0.55f),
                     boxed ? Mats.Lit(new Color(0.7f, 0.55f, 0.35f)) : Mats.Lit(it.Def.color * 1.4f, 0.35f, 0.3f), false, false, "held");
                 g.layer = 0;

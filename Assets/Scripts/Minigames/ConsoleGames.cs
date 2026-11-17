@@ -154,6 +154,11 @@ namespace RH
             "systemd-logind[701]: New session 412 of user deploy.",
             "kernel: nvme nvme0: 32/0/0 default/read/poll queues",
             "node_exporter[988]: msg=\"Listening on\" address=:9100",
+            // Scary-looking but harmless: real logs are full of these.
+            "ACPI Error: AE_NOT_FOUND, While resolving a named reference package element (20230628/dspkginit-438)",
+            "kernel: ipmi_si dmi-ipmi-si.0: The BMC does not support clearing the recv irq bit, compensating",
+            "kernel: pcieport 0000:00:1c.0: AER: Corrected error received: 0000:00:1c.0",
+            "systemd[1]: Failed to start Load Kernel Module drm.",
         };
 
         protected override void Begin()
@@ -165,7 +170,9 @@ namespace RH
             {
                 Fault.LinkDown => new[] { "ixgbe 0000:3b:00.0 eth0: NIC Link is Down", "bond0: link status definitely down for interface eth0, disabling it", "lldpd[877]: removal request for neighbor on eth0 (no carrier)" },
                 Fault.BadSfp => new[] { "ixgbe 0000:3b:00.1 eth1: SFP+ module TX fault detected", "ixgbe eth1: failed to read SFP+ module EEPROM", "bond0: link status definitely down for interface eth1, disabling it" },
-                _ => new[] { "watchdog: BUG: soft lockup - CPU#12 stuck for 23s! [kworker/12:1]", "rcu: INFO: rcu_sched self-detected stall on CPU", "BMC: host OS heartbeat lost (watchdog timer expired)" },
+                Fault.BadDimm => new[] { $"EDAC MC0: 1 UE memory read error on CPU_SrcID#0_Ha#0_Chan#{d.badDimm % 8 / 2}_DIMM#{d.badDimm % 2} (page:0x3f2a1)", "mce: [Hardware Error]: Machine check events logged", "Kernel panic - not syncing: Fatal machine check" },
+                Fault.FanFail => new[] { "CPU12: Core temperature above threshold, cpu clock throttled (total events = 4412)", "mce: CPU0: Package temperature above threshold, cpu clock throttled", "thermal thermal_zone2: critical temperature reached (99 C), shutting down" },
+                _ => new[] { "watchdog: BUG: soft lockup - CPU#12 stuck for 23s! [kworker/12:1]", "rcu: INFO: rcu_sched self-detected stall on CPU", "INFO: task jbd2/md0-8:412 blocked for more than 120 seconds." },
             };
             var all = new List<LogLine>();
             for (int i = 0; i < 11; i++) all.Add(new LogLine { text = Noise[rnd.Next(Noise.Length)] });
@@ -177,11 +184,15 @@ namespace RH
                 ("Loose or unseated network cable", Fault.LinkDown),
                 ("Failed SFP+ optic", Fault.BadSfp),
                 ("Hung operating system (kernel lockup)", Fault.Hung),
-                ("Failed memory module (DIMM)", Fault.None),
-                ("CPU overheating", Fault.None),
+                ("Failed memory module (DIMM)", Fault.BadDimm),
+                ("Failed fan (CPU overheating)", Fault.FanFail),
+                ("Failed RAID controller", Fault.None),
+                ("Failed power supply", Fault.None),
             }.OrderBy(_ => rnd.Next()).ToList();
-            title = $"Diagnose: {d.Def.name} in {task.rack} U{task.u}";
-            hint = "Read the console log and the BMC health panel, then pick the root cause. Guessing wrong wastes time.";
+            title = $"Diagnose: {d.Def.name} in {task.rack} U{task.u}" + (task.cart ? " (crash cart)" : "");
+            hint = task.cart
+                ? "The BMC is down, so all you have is the console on the crash cart. Read the log carefully, then pick the root cause."
+                : "Read the console log and the BMC health panel together, then pick the root cause. A wrong call costs reputation.";
         }
 
         protected override void Update(float dt, Vector2 m) { }
@@ -205,19 +216,31 @@ namespace RH
             Ui.Label(new Rect(bmc.x + 14, bmc.y + 10, 400, 24), "BMC HEALTH", 16, Ui.Accent, TextAnchor.UpperLeft, true);
             void Row(int i, string k, string v, Color c)
             {
-                Ui.Label(new Rect(bmc.x + 14, bmc.y + 44 + i * 30, 200, 26), k, 17, Ui.Dim);
-                Ui.Label(new Rect(bmc.x + 200, bmc.y + 44 + i * 30, 230, 26), v, 17, c, TextAnchor.UpperLeft, true);
+                Ui.Label(new Rect(bmc.x + 14, bmc.y + 40 + i * 26, 200, 24), k, 16, Ui.Dim);
+                Ui.Label(new Rect(bmc.x + 200, bmc.y + 40 + i * 26, 230, 24), v, 16, c, TextAnchor.UpperLeft, true);
             }
-            Row(0, "Power", "ON", Ui.Good);
-            Row(1, "CPU temp", "47 C (normal)", Ui.Good);
-            Row(2, "Memory", "OK (no ECC errors)", Ui.Good);
-            Row(3, "Host heartbeat", fault == Fault.Hung ? "LOST" : "OK", fault == Fault.Hung ? Ui.Bad : Ui.Good);
-            Row(4, "Network links", fault == Fault.Hung ? "UP" : "DEGRADED", fault == Fault.Hung ? Ui.Good : Ui.Bad);
-            Ui.Label(new Rect(p.x + 810, p.y + 330, 440, 26), "ROOT CAUSE", 16, Ui.Dim, TextAnchor.UpperLeft, true);
+            if (task.cart)
+            {
+                Ui.Label(new Rect(bmc.x + 14, bmc.y + 50, 410, 150), "<b>No response from 10.20.0." + (Dev.id % 200 + 20) + "</b>\n\nThe BMC is down too. You're reading the server's own console through the crash cart's monitor and keyboard.", 17, Ui.Bad);
+            }
+            else
+            {
+                // Each fault shows up in two places, so no single row gives the answer away.
+                bool crashed = fault == Fault.Hung || fault == Fault.BadDimm;
+                bool hot = fault == Fault.FanFail;
+                bool net = fault == Fault.LinkDown || fault == Fault.BadSfp;
+                Row(0, "Power supplies", "2/2 OK (redundant)", Ui.Good);
+                Row(1, "CPU temp", hot ? "88 C (warning)" : "47 C (normal)", hot ? Ui.Warn : Ui.Good);
+                Row(2, "Fans", hot ? "5/6 OK" : "6/6 OK", hot ? Ui.Warn : Ui.Good);
+                Row(3, "Memory", fault == Fault.BadDimm ? "1 uncorrectable error" : "OK (no ECC errors)", fault == Fault.BadDimm ? Ui.Warn : Ui.Good);
+                Row(4, "Host heartbeat", crashed ? "LOST" : "OK", crashed ? Ui.Bad : Ui.Good);
+                Row(5, "Network links", net ? "DEGRADED" : "UP", net ? Ui.Bad : Ui.Good);
+            }
+            Ui.Label(new Rect(p.x + 810, p.y + 322, 440, 26), "ROOT CAUSE", 16, Ui.Dim, TextAnchor.UpperLeft, true);
             for (int i = 0; i < options.Count; i++)
             {
                 var (label, f) = options[i];
-                if (Ui.Button(new Rect(p.x + 810, p.y + 362 + i * 56, 440, 46), label, true, 18))
+                if (Ui.Button(new Rect(p.x + 810, p.y + 350 + i * 42, 440, 36), label, true, 17))
                 {
                     if (f != Fault.None && f == fault) Win($"Root cause found: {Shift.FaultName(fault)}.");
                     else Oops($"Wrong diagnosis: it wasn't \"{label}\"", 2.5f);
@@ -226,9 +249,13 @@ namespace RH
         }
     }
 
-    /// <summary>Hold the power button through a hard reset, then boot from the right device.</summary>
+    /// <summary>
+    /// Hold the power button through a hard reset, then boot from the right device. In power-on mode
+    /// (after the technician dropped the server's power) a short press is enough.
+    /// </summary>
     public class PowerCycleGame : Minigame
     {
+        public bool powerOn;
         int phase;
         float hold, timer;
         bool warned;
@@ -237,8 +264,10 @@ namespace RH
 
         protected override void Begin()
         {
-            title = $"Power-cycle: {Dev.Def.name} in {task.rack} U{task.u}";
-            hint = "The OS is frozen. Press and HOLD the power button until it forces off (about 4 seconds).";
+            title = (powerOn ? "Power on: " : "Power-cycle: ") + $"{Dev.Def.name} in {task.rack} U{task.u}";
+            hint = powerOn
+                ? "The server is off. Give the power button a short press (don't hold it) to power it on."
+                : "The OS is frozen. Press and HOLD the power button until it forces off (about 4 seconds).";
             var rnd = new System.Random(task.deviceId);
             boot = new List<string> { Correct, "PXE: Intel X710 port 1", "USB: SanDisk Cruzer", "UEFI Shell", "RAID Virtual Disk 1 (scratch)" }.OrderBy(_ => rnd.Next()).ToList();
         }
@@ -247,7 +276,17 @@ namespace RH
 
         protected override void Update(float dt, Vector2 m)
         {
-            if (phase == 0)
+            if (phase == 0 && powerOn)
+            {
+                if (Holding && Vector2.Distance(m, Button) < 90f) hold += dt / 4f;
+                if (Released && hold > 0f)
+                {
+                    if (hold < 0.3f) { phase = 1; timer = 0; Audio.Play("clunk"); hint = "Powering on... watch the POST screen."; }
+                    else { Oops("You held it too long: that's a forced power-off request. Short press!", 0.5f); }
+                    hold = 0;
+                }
+            }
+            else if (phase == 0)
             {
                 if (Holding && Vector2.Distance(m, Button) < 90f) hold += dt / 4f;
                 else
@@ -282,7 +321,7 @@ namespace RH
                 Ui.Circle(Button, 60f, Holding && Vector2.Distance(Ui.Mouse, Button) < 90f ? new Color(0.3f, 0.5f, 0.7f) : new Color(0.25f, 0.27f, 0.3f));
                 Ui.Label(new Rect(Button.x - 60, Button.y - 20, 120, 40), "POWER", 20, Color.white, TextAnchor.MiddleCenter, true);
                 Ui.Bar(new Rect(Button.x - 120, Button.y + 120, 240, 18), hold, Ui.Accent);
-                Ui.Label(new Rect(scr.x + 20, scr.y + 20, scr.width - 40, 200), "[ console frozen ]\n\nwatchdog: BUG: soft lockup - CPU#12 stuck for 31s!\nwatchdog: BUG: soft lockup - CPU#3 stuck for 31s!", 16, new Color(0.7f, 0.75f, 0.8f));
+                Ui.Label(new Rect(scr.x + 20, scr.y + 20, scr.width - 40, 200), powerOn ? "[ no signal ]" : "[ console frozen ]\n\nwatchdog: BUG: soft lockup - CPU#12 stuck for 31s!\nwatchdog: BUG: soft lockup - CPU#3 stuck for 31s!", 16, new Color(0.7f, 0.75f, 0.8f));
             }
             else
             {

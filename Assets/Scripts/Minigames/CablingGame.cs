@@ -4,15 +4,21 @@ using UnityEngine;
 
 namespace RH
 {
+    public enum CableMode { Install, Reseat, Unplug }
+
     /// <summary>
     /// Patch every connector on the back of a device to the port the work order calls for.
-    /// In reseat mode everything is already patched except one loose cable that must be found and reseated.
+    /// Reseat: everything is patched except one loose cable that must be found and reseated.
+    /// Unplug (decommissioning): pull every cable of this unit, and only this unit's: the neighbours'
+    /// cables run through the same space.
     /// </summary>
     public class CablingGame : Minigame
     {
-        public bool reseat;
+        public CableMode mode;
+        bool reseat => mode == CableMode.Reseat;
+        bool unplug => mode == CableMode.Unplug;
 
-        class Src { public string name, dest; public Vector2 p; public bool connected, loose; public Color color; }
+        class Src { public string name, dest; public Vector2 p; public bool connected, loose, neighbour; public Color color; }
         class Dst { public string id, label; public Vector2 p; }
         class Group { public string name; public Rect r; public int count; public string prefix; }
 
@@ -25,7 +31,7 @@ namespace RH
 
         protected override void Begin()
         {
-            def = reseat ? Dev.Def : Catalog.Dev(task.def);
+            def = mode == CableMode.Install ? Catalog.Dev(task.def) : Dev.Def;
             var rnd = new System.Random(task.u * 31 + task.rack.GetHashCode());
             var p = P;
             bool isSwitch = def.kind == DevKind.Switch;
@@ -47,17 +53,39 @@ namespace RH
             }
             var usedNet = new HashSet<int>();
             var usedPp = new HashSet<int>();
+            var usedPdu = new HashSet<int>();
             int outlet = 1 + rnd.Next(12);
+            usedPdu.Add(outlet);
             int Pick(HashSet<int> used, int max) { int v; do v = 1 + rnd.Next(max); while (used.Contains(v)); used.Add(v); return v; }
-            for (int i = 0; i < def.ports.Length; i++)
+            var ports = def.ports.Select(x => (name: x, neighbour: false)).ToList();
+            if (unplug)
             {
-                string port = def.ports[i];
+                // A few of the neighbours' cables run right past this unit's connectors.
+                var rack = shift.Rack(task.rack);
+                var near = rack.devices.Where(d => d.id != task.deviceId && Mathf.Abs(d.u - task.u) <= 4).OrderBy(_ => rnd.Next()).Take(3).ToList();
+                foreach (var n in near)
+                {
+                    string np = n.Def.ports[rnd.Next(n.Def.ports.Length)];
+                    ports.Insert(rnd.Next(ports.Count + 1), ($"U{n.u} {np}", true));
+                }
+            }
+            for (int i = 0; i < ports.Count; i++)
+            {
+                var (port, neighbour) = ports[i];
+                string key = neighbour ? port.Substring(port.IndexOf(' ') + 1) : port;
+                if (unplug && !neighbour) port = $"U{task.u} {port}";
                 string dest; Color c;
-                if (port == "PSU A") { dest = $"PDU-A-{outlet}"; c = new Color(0.55f, 0.12f, 0.1f); }
-                else if (port == "PSU B") { dest = $"PDU-B-{outlet}"; c = new Color(0.12f, 0.2f, 0.55f); }
-                else if (port == "mgmt" || port == "ipmi" || port.StartsWith("SAS")) { dest = $"PP-{Pick(usedPp, 12)}"; c = new Color(0.95f, 0.8f, 0.2f); }
+                if (key == "PSU A") { dest = neighbour ? $"PDU-A-{Pick(usedPdu, 12)}" : $"PDU-A-{outlet}"; c = new Color(0.55f, 0.12f, 0.1f); }
+                else if (key == "PSU B") { dest = neighbour ? $"PDU-B-{Pick(usedPdu, 12)}" : $"PDU-B-{outlet}"; c = new Color(0.12f, 0.2f, 0.55f); }
+                else if (key == "mgmt" || key == "ipmi" || key.StartsWith("SAS")) { dest = $"PP-{Pick(usedPp, 12)}"; c = new Color(0.95f, 0.8f, 0.2f); }
                 else { dest = (isSwitch ? "CORE-" : "SW-") + Pick(usedNet, 24); c = new Color(0.25f, 0.6f, 1f); }
-                srcs.Add(new Src { name = port, dest = dest, color = c, p = new Vector2(p.x + 330, p.y + 150 + i * (440f / Mathf.Max(1, def.ports.Length - 1))) });
+                srcs.Add(new Src { name = port, dest = dest, color = c, neighbour = neighbour, connected = unplug, p = new Vector2(p.x + 330, p.y + 150 + i * (440f / Mathf.Max(1, ports.Count - 1))) });
+            }
+            if (unplug)
+            {
+                title = $"Unplug: {def.name} in {task.rack} U{task.u}";
+                hint = $"Click each cable labelled U{task.u} to unplug it. Read the labels: the other cables belong to the neighbours and are live!";
+                return;
             }
             if (reseat)
             {
@@ -70,7 +98,7 @@ namespace RH
             else
             {
                 title = $"Cabling: {def.name} in {task.rack} U{task.u}";
-                hint = "Drag from each connector on the device to the port listed in the work order. Wrong ports cost time.";
+                hint = "Drag from each connector on the device to the port listed in the work order. Wrong ports cost reputation and the clean-work bonus.";
             }
         }
 
@@ -87,6 +115,7 @@ namespace RH
         protected override void Update(float dt, Vector2 m)
         {
             flash += dt;
+            if (unplug) { UpdateUnplug(m); return; }
             if (Pressed)
             {
                 var s = srcs.FirstOrDefault(x => Vector2.Distance(x.p, m) < 24f);
@@ -117,6 +146,22 @@ namespace RH
             if (srcs.All(s => s.connected && !s.loose)) Win(reseat ? "Link is back up. The customer is online again." : $"{def.name} cabled and powered on.");
         }
 
+        void UpdateUnplug(Vector2 m)
+        {
+            if (Pressed)
+            {
+                var s = srcs.FirstOrDefault(x => x.connected && Vector2.Distance(x.p, m) < 24f);
+                if (s != null)
+                {
+                    Audio.Play("plug");
+                    // A neighbour's cable: you spot the label and push it straight back in, but the link flapped.
+                    if (s.neighbour) Oops($"{s.name} isn't this unit's cable. You knocked a neighbour's link down for a moment", 2f);
+                    else s.connected = false;
+                }
+            }
+            if (srcs.Where(s => !s.neighbour).All(s => !s.connected)) Win($"{def.name} is fully unplugged.");
+        }
+
         public override void Draw()
         {
             Frame();
@@ -128,9 +173,10 @@ namespace RH
             float y = wo.y + 42;
             foreach (var s in srcs)
             {
-                bool ok = s.connected && !s.loose;
+                if (s.neighbour) continue;
+                bool ok = unplug ? !s.connected : s.connected && !s.loose;
                 Ui.Label(new Rect(wo.x + 12, y, wo.width - 24, 22), s.name, 17, ok ? Ui.Good : Ui.Text, TextAnchor.UpperLeft, true);
-                Ui.Label(new Rect(wo.x + 12, y + 22, wo.width - 24, 22), "-> " + Pretty(s.dest), 16, ok ? Ui.Good : Ui.Dim);
+                Ui.Label(new Rect(wo.x + 12, y + 22, wo.width - 24, 22), unplug ? (ok ? "unplugged" : "from " + Pretty(s.dest)) : "-> " + Pretty(s.dest), 16, ok ? Ui.Good : Ui.Dim);
                 y += 56;
             }
             // Device back panel
@@ -157,7 +203,7 @@ namespace RH
                 bool blink = s.loose && Mathf.Repeat(flash * 2.5f, 1f) < 0.5f;
                 Ui.Circle(s.p, 15f, blink ? Ui.Bad : s.connected ? s.color : new Color(0.1f, 0.1f, 0.12f));
                 Ui.Ring(s.p, 18f, s.loose ? Ui.Bad : Ui.Line);
-                Ui.Label(new Rect(s.p.x - 140, s.p.y - 12, 118, 24), s.name, 16, s.loose ? Ui.Bad : Ui.Text, TextAnchor.MiddleRight, true);
+                Ui.Label(new Rect(s.p.x - 140, s.p.y - 12, 118, 24), s.name, unplug ? 14 : 16, s.loose ? Ui.Bad : Ui.Text, TextAnchor.MiddleRight, true);
                 if (s.connected)
                 {
                     var d = DstById(s.dest);
