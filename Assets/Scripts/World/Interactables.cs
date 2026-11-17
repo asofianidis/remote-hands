@@ -14,12 +14,17 @@ namespace RH
     public class RackView : Interactable
     {
         public const float Width = 0.6f, Depth = 1.1f, Height = 2.05f, UnitH = 0.0445f, Bottom = 0.1f;
+        /// <summary>The zero-U PDU strips run down the rear side channels, outside the units' footprint.</summary>
+        public const float PduX = 0.272f;
         public string label;
+        /// <summary>While a job's 3D rig stands in for a unit, the rack doesn't draw that unit (or, for PDU work, any power cords).</summary>
+        public int hiddenDevice;
+        public bool hideCords;
         Transform content;
         GameObject beacon;
         readonly List<Renderer> blinkers = new List<Renderer>();
 
-        public static float UY(int u) => Bottom + (u - 1) * UnitH;
+        public static float UY(float u) => Bottom + (u - 1) * UnitH;
 
         public void Init(string label)
         {
@@ -37,8 +42,8 @@ namespace RH
                 Mats.Box(t, new Vector3(x, Height / 2, -Depth / 2 + 0.04f), new Vector3(0.025f, Height - 0.1f, 0.02f), post);
                 Mats.Box(t, new Vector3(x, Height / 2, Depth / 2 - 0.04f), new Vector3(0.025f, Height - 0.1f, 0.02f), post);
             }
-            Mats.Box(t, new Vector3(-0.22f, 1.05f, Depth / 2 - 0.07f), new Vector3(0.05f, 1.8f, 0.05f), Mats.Lit(new Color(0.55f, 0.12f, 0.1f), 0.3f, 0.3f), false, true, "PDU A");
-            Mats.Box(t, new Vector3(0.22f, 1.05f, Depth / 2 - 0.07f), new Vector3(0.05f, 1.8f, 0.05f), Mats.Lit(new Color(0.12f, 0.2f, 0.55f), 0.3f, 0.3f), false, true, "PDU B");
+            Mats.Box(t, new Vector3(-PduX, 1.05f, Depth / 2 - 0.07f), new Vector3(0.036f, 1.8f, 0.05f), Mats.Lit(new Color(0.55f, 0.12f, 0.1f), 0.3f, 0.3f), false, true, "PDU A");
+            Mats.Box(t, new Vector3(PduX, 1.05f, Depth / 2 - 0.07f), new Vector3(0.036f, 1.8f, 0.05f), Mats.Lit(new Color(0.12f, 0.2f, 0.55f), 0.3f, 0.3f), false, true, "PDU B");
             Mats.Text(t, new Vector3(0, Height + 0.09f, Depth / 2 - 0.05f), label + "  REAR", 0.09f, new Color(1f, 0.75f, 0.6f), TextAnchor.MiddleCenter, 180f);
             var col = gameObject.AddComponent<BoxCollider>();
             col.center = new Vector3(0, Height / 2, 0);
@@ -57,6 +62,7 @@ namespace RH
             float front = -Depth / 2 + 0.05f;
             foreach (var d in rack.devices)
             {
+                if (d.id == hiddenDevice) continue;
                 var def = d.Def;
                 float h = def.heightU * UnitH - 0.004f;
                 float y = UY(d.u) + h / 2 + 0.002f;
@@ -83,7 +89,7 @@ namespace RH
                 if (alarm) blinkers.Add(pwr.GetComponent<Renderer>());
                 BuildRear(d, y, h, front + 0.9f);
             }
-            if (rack.devices.Count > 0)
+            if (rack.devices.Count > 0 && !hideCords)
             {
                 // Data cables gathered into a bundle running up to the overhead tray.
                 float lowY = UY(rack.devices.Min(d => d.u));
@@ -118,8 +124,8 @@ namespace RH
                     Mats.Unlit(off ? new Color(0.05f, 0.05f, 0.05f) : failed ? new Color(1f, 0.15f, 0.1f) : new Color(0.2f, 0.9f, 0.3f)), false, false);
                 if (failed) blinkers.Add(led.GetComponent<Renderer>());
                 // Cord to the PDU on its side: PSU 1 to the red A feed, PSU 2 to the blue B feed.
-                float pdx = i == 0 ? -0.22f : 0.22f;
-                if (!failed)
+                float pdx = i == 0 ? -PduX : PduX;
+                if (!failed && !hideCords)
                     Mats.Box(content, new Vector3((px + pdx) / 2f, y - 0.006f, Depth / 2 - 0.07f), new Vector3(Mathf.Abs(px - pdx), 0.008f, 0.008f),
                         Mats.Lit(i == 0 ? new Color(0.6f, 0.15f, 0.12f) : new Color(0.15f, 0.25f, 0.6f)), false, false);
             }

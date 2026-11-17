@@ -193,7 +193,6 @@ namespace RH
             var shred = Mats.Box(root, new Vector3(15.65f, 1.1f, 4.15f), new Vector3(0.6f, 0.45f, 0.5f), Mats.Lit(new Color(0.5f, 0.12f, 0.08f), 0.3f, 0.3f), true, true, "shredder");
             AddStation(body, "bench", "Wipe & shred station");
             AddStation(shred, "bench", "Wipe & shred station");
-            Mats.Box(root, new Vector3(14.6f, 0.92f, 4.1f), new Vector3(0.5f, 0.08f, 0.35f), Mats.Lit(new Color(0.2f, 0.22f, 0.25f)), false);
             AddStation(top, "bench", "Wipe & shred station");
             stations["bench"] = top.transform.position + Vector3.up * 0.9f;
             Mats.Text(root, new Vector3(15f, 1.65f, 3.7f), "WIPE & SHRED", 0.14f, new Color(1f, 0.7f, 0.6f));
@@ -274,6 +273,16 @@ namespace RH
         public void Refresh(Shift shift, string label)
         {
             if (label != null && racks.TryGetValue(label, out var v)) v.Rebuild(shift.Rack(label), shift);
+        }
+
+        /// <summary>Let a job's rig stand in for a unit (and optionally the cords) while it's being worked on. 0 shows everything again.</summary>
+        public void Hide(Shift shift, string label, int deviceId, bool cords = false)
+        {
+            if (label == null || !racks.TryGetValue(label, out var v)) return;
+            if (v.hiddenDevice == deviceId && v.hideCords == cords) return;
+            v.hiddenDevice = deviceId;
+            v.hideCords = cords;
+            v.Rebuild(shift.Rack(label), shift);
         }
 
         public void RefreshAll(Shift shift)

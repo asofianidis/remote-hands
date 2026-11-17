@@ -7,6 +7,7 @@ namespace RH
     /// <summary>Pick the right firmware image, then keep the flash stable until it finishes.</summary>
     public class FirmwareGame : Minigame
     {
+        public override bool OnScreen => true;
         List<string> images;
         string correct, current;
         int phase;
@@ -135,6 +136,7 @@ namespace RH
     /// <summary>Read the console and BMC to work out why a server dropped off the network.</summary>
     public class DiagnoseGame : Minigame
     {
+        public override bool OnScreen => true;
         class LogLine { public string text; public bool key; }
         readonly List<LogLine> lines = new List<LogLine>();
         List<(string label, Fault fault)> options;
@@ -255,6 +257,7 @@ namespace RH
     /// </summary>
     public class PowerCycleGame : Minigame
     {
+        public override bool OnScreen => true;
         public bool powerOn;
         int phase;
         float hold, timer;

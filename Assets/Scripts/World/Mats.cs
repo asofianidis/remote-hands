@@ -53,6 +53,45 @@ namespace RH
             return g;
         }
 
+        /// <summary>A world-space line (cables, cords, jumpers). Colour comes from the vertex colour.</summary>
+        public static LineRenderer Line(Transform parent, Color c, float width)
+        {
+            var g = new GameObject("line");
+            g.transform.SetParent(parent, false);
+            var lr = g.AddComponent<LineRenderer>();
+            lr.useWorldSpace = true;
+            lr.sharedMaterial = Unlit(Color.white);
+            lr.startColor = lr.endColor = c;
+            lr.startWidth = lr.endWidth = width;
+            lr.numCapVertices = 2;
+            lr.numCornerVertices = 2;
+            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            lr.receiveShadows = false;
+            return lr;
+        }
+
+        /// <summary>A cable hanging between two points.</summary>
+        public static void Sag(LineRenderer lr, Vector3 a, Vector3 b, float sag, int n = 18)
+        {
+            lr.positionCount = n + 1;
+            for (int i = 0; i <= n; i++)
+            {
+                float t = i / (float)n;
+                lr.SetPosition(i, Vector3.Lerp(a, b, t) + Vector3.down * Mathf.Sin(t * Mathf.PI) * sag);
+            }
+        }
+
+        /// <summary>A cubic Bezier curve through four control points.</summary>
+        public static void Bezier(LineRenderer lr, Vector3 a, Vector3 c1, Vector3 c2, Vector3 b, int n = 40)
+        {
+            lr.positionCount = n + 1;
+            for (int i = 0; i <= n; i++)
+            {
+                float t = i / (float)n, u = 1 - t;
+                lr.SetPosition(i, u * u * u * a + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * b);
+            }
+        }
+
         /// <summary>World-space text, readable when looking along the parent's +Z.</summary>
         public static TextMesh Text(Transform parent, Vector3 pos, string text, float height, Color c, TextAnchor anchor = TextAnchor.MiddleCenter, float yaw = 0f)
         {

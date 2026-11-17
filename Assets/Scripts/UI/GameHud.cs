@@ -18,7 +18,7 @@ namespace RH
                 case GameScreen.Play: DrawHud(); break;
                 case GameScreen.Tablet: Ui.Shade(); DrawTablet(); break;
                 case GameScreen.Rack: Ui.Shade(); DrawRack(); break;
-                case GameScreen.Minigame: Ui.Shade(0.75f); minigame?.Draw(); break;
+                case GameScreen.Minigame: DrawMinigame(); break;
                 case GameScreen.Pause: DrawHud(false); DrawPause(); break;
                 case GameScreen.Settings: Ui.Shade(0.8f); DrawSettings(); break;
                 case GameScreen.Summary: DrawSummary(); break;
@@ -27,6 +27,18 @@ namespace RH
             }
             if (photoFlash > 0) Ui.Box(new Rect(0, 0, Ui.W, Ui.H), new Color(1, 1, 1, photoFlash * 0.7f));
             DrawToasts();
+        }
+
+        void DrawMinigame()
+        {
+            if (minigame == null) return;
+            if (minigame.OnScreen)
+            {
+                // Drawn onto the crash cart's monitor in the world.
+                if (MonitorCanvas(out var m)) { Ui.PushCanvas(m); minigame.Draw(); Ui.PopCanvas(); }
+            }
+            else if (minigame.InWorld) minigame.Draw();
+            else { Ui.Shade(0.75f); minigame.Draw(); }
         }
 
         static Color Sev(int s) => s == 1 ? Ui.Good : s == 2 ? Ui.Warn : s == 3 ? Ui.Bad : Ui.Accent;

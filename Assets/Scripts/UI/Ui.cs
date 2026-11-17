@@ -12,7 +12,41 @@ namespace RH
         public const float H = 1080f;
         public static float Scale => Mathf.Max(0.01f, Screen.height / H);
         public static float W => Screen.width / Scale;
-        public static Vector2 Mouse => new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y) / Scale;
+        static Matrix4x4? mouseToCanvas;
+
+        /// <summary>The mouse in canvas units (or in an in-world screen's canvas while one is active).</summary>
+        public static Vector2 Mouse
+        {
+            get
+            {
+                var px = new Vector3(Input.mousePosition.x, Screen.height - Input.mousePosition.y, 0f);
+                return mouseToCanvas.HasValue ? (Vector2)mouseToCanvas.Value.MultiplyPoint3x4(px) : (Vector2)px / Scale;
+            }
+        }
+
+        /// <summary>Route Ui.Mouse through a canvas-to-pixels matrix (an in-world monitor), or back to normal with null.</summary>
+        public static void SetMouseCanvas(Matrix4x4? canvasToPixels) => mouseToCanvas = canvasToPixels?.inverse;
+
+        /// <summary>Draw subsequent GUI through a canvas-to-pixels matrix, e.g. onto an in-world monitor.</summary>
+        public static void PushCanvas(Matrix4x4 canvasToPixels)
+        {
+            baseMatrix = canvasToPixels;
+            GUI.matrix = baseMatrix;
+        }
+
+        public static void PopCanvas()
+        {
+            baseMatrix = Matrix4x4.Scale(new Vector3(Scale, Scale, 1f));
+            GUI.matrix = baseMatrix;
+        }
+
+        /// <summary>A world point in canvas units, and whether it's in front of the camera.</summary>
+        public static Vector2 FromWorld(Camera cam, Vector3 world, out bool inFront)
+        {
+            var s = cam.WorldToScreenPoint(world);
+            inFront = s.z > 0;
+            return new Vector2(s.x, Screen.height - s.y) / Scale;
+        }
 
         public static readonly Color Bg = new Color(0.05f, 0.07f, 0.09f, 0.97f);
         public static readonly Color Bg2 = new Color(0.1f, 0.13f, 0.16f, 0.95f);

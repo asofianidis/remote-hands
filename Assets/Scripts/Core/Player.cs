@@ -49,6 +49,19 @@ namespace RH
             Apply();
         }
 
+        /// <summary>Hand the camera back to the player after a job moved it.</summary>
+        public void ResetCamera()
+        {
+            cam.transform.localPosition = new Vector3(0, 1.62f, 0);
+            Apply();
+        }
+
+        /// <summary>Hide what's in the technician's hands while the camera is off doing a job.</summary>
+        public void ShowHeld(bool on)
+        {
+            if (heldRoot.gameObject.activeSelf != on) heldRoot.gameObject.SetActive(on);
+        }
+
         void Apply()
         {
             transform.rotation = Quaternion.Euler(0, yaw, 0);

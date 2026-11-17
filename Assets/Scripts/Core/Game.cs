@@ -30,6 +30,8 @@ namespace RH
         /// <summary>The smart-hands camera is raised: clicking takes a photo.</summary>
         public bool cameraUp;
         float photoFlash;
+        /// <summary>Screenshot mode: jump the work camera into place instead of gliding.</summary>
+        bool snapCamera;
 
         class ToastMsg { public string text; public int sev; public float time; }
         readonly List<ToastMsg> toasts = new List<ToastMsg>();
@@ -53,7 +55,7 @@ namespace RH
         public void ShowMenu()
         {
             screen = GameScreen.Menu;
-            minigame = null;
+            CloseMinigame();
             cameraUp = false;
             shift = new Shift(new Career { day = 3 }, 12345);
             facility.Build(shift);
@@ -80,7 +82,7 @@ namespace RH
         {
             confirmClockOut = false;
             cameraUp = false;
-            minigame = null;
+            CloseMinigame();
             toasts.Clear();
             TutorialReset();
         }
@@ -166,7 +168,7 @@ namespace RH
         {
             confirmClockOut = false;
             cameraUp = false;
-            minigame = null;
+            CloseMinigame();
             shift.End();
             ShiftSave.Delete();
             if (shift.Fired)
@@ -222,14 +224,15 @@ namespace RH
                 {
                     var t = minigame.task;
                     if (minigame.success) shift.Complete(t);
+                    CloseMinigame();
                     facility.Refresh(shift, t.rack);
-                    minigame = null;
                     screen = GameScreen.Rack;
                 }
             }
             if (working) TutorialTick();
             player.inputEnabled = screen == GameScreen.Play;
             player.Tick(this, dt);
+            MoveWorkCamera(dt);
             if (screen == GameScreen.Menu)
                 player.Teleport(new Vector3(11f, 0f, 3.2f), -40f + Mathf.Sin(Time.time * 0.08f) * 25f, 8f);
             facility.ShowMarker(working ? WaypointTarget() : null);
@@ -264,7 +267,7 @@ namespace RH
                     else if (Keys.Down(Keys.Action.Tablet)) OpenTablet();
                     break;
                 case GameScreen.Minigame:
-                    if (esc) { minigame = null; screen = GameScreen.Rack; }
+                    if (esc) { CloseMinigame(); screen = GameScreen.Rack; }
                     break;
                 case GameScreen.Pause:
                     if (esc) ClosePause();
@@ -329,6 +332,45 @@ namespace RH
             bool rear = Shift.RearJob(t.kind);
             if (rear == rearSide) return null;
             return rear ? "Rear job: work from the hot aisle behind the rack" : "Front job: walk around to the front of the rack";
+        }
+
+        /// <summary>End the current job (if any): tear down its rig and give the camera back to the player.</summary>
+        void CloseMinigame()
+        {
+            if (minigame != null) minigame.End();
+            minigame = null;
+            player.ResetCamera();
+            Ui.SetMouseCanvas(null);
+        }
+
+        /// <summary>3D jobs fly the camera in close; console jobs also route the mouse onto the cart's monitor.</summary>
+        void MoveWorkCamera(float dt)
+        {
+            bool workCam = screen == GameScreen.Minigame && minigame != null && (minigame.InWorld || minigame.OnScreen);
+            player.ShowHeld(!workCam);
+            if (!workCam) { Ui.SetMouseCanvas(null); return; }
+            var ct = player.cam.transform;
+            float k = snapCamera ? 1f : 1f - Mathf.Exp(-dt * 9f);
+            ct.position = Vector3.Lerp(ct.position, minigame.camPos, k);
+            ct.rotation = Quaternion.Slerp(ct.rotation, minigame.camRot, k);
+            Ui.SetMouseCanvas(minigame.OnScreen && MonitorCanvas(out var m) ? m : (Matrix4x4?)null);
+        }
+
+        /// <summary>The matrix that maps the 1280x720 job canvas onto the monitor's display, in GUI pixels.</summary>
+        bool MonitorCanvas(out Matrix4x4 m)
+        {
+            m = Matrix4x4.identity;
+            var cam = player.cam;
+            var a = cam.WorldToScreenPoint(minigame.displayTL);
+            var b = cam.WorldToScreenPoint(minigame.displayBR);
+            if (a.z <= 0 || b.z <= 0) return false;
+            var tl = new Vector2(a.x, UnityEngine.Screen.height - a.y);
+            var br = new Vector2(b.x, UnityEngine.Screen.height - b.y);
+            float k = (br.x - tl.x) / 1280f;
+            if (k <= 0.01f) return false;
+            var p = Ui.Center(1280, 720);
+            m = Matrix4x4.TRS(new Vector3(tl.x - p.x * k, tl.y - p.y * k, 0), Quaternion.identity, new Vector3(k, k, 1));
+            return true;
         }
 
         public void StartTask(WorkTask t)
@@ -490,6 +532,7 @@ namespace RH
             Directory.CreateDirectory(dir);
             Career.PathOverride = Path.Combine(dir, "career.json");
             Career.Delete();
+            snapCamera = true;
             IEnumerator Shot(string name)
             {
                 for (int k = 0; k < 8; k++) yield return null;
@@ -569,28 +612,28 @@ namespace RH
             foreach (var t in tickets)
             {
                 yield return Play(t.tasks[0]);
-                minigame = null;
+                CloseMinigame();
                 if (t.type == TicketType.FixIssue)
                 {
                     shift.Complete(t.tasks[0]);
                     yield return Play(t.tasks[t.tasks.Count - 1]);
-                    minigame = null;
+                    CloseMinigame();
                 }
                 if (t.type == TicketType.Decommission)
                 {
                     shift.Complete(t.tasks[0]);
                     shift.inv.hands.Clear();
                     yield return Play(t.tasks[1]);
-                    minigame = null;
+                    CloseMinigame();
                     shift.Complete(t.tasks[1]);
                     var wipe = t.tasks.FirstOrDefault(x => x.kind == TaskKind.Wipe);
-                    if (wipe != null) { yield return Play(wipe); minigame = null; }
+                    if (wipe != null) { yield return Play(wipe); CloseMinigame(); }
                 }
                 if (t.type == TicketType.CrossConnect)
                 {
                     shift.Complete(t.tasks[0]);
                     yield return Play(t.tasks[1]);
-                    minigame = null;
+                    CloseMinigame();
                 }
             }
             // Second half of a rack-mount (the screws) and cabling after a completed mount.
@@ -602,13 +645,20 @@ namespace RH
                 shift.Complete(mount);
                 yield return Play(mountTicket.tasks[1]);
             }
-            minigame = null;
+            CloseMinigame();
             // Follow-ups: what a pulled PSU and a pulled healthy drive leave behind.
             var victim = shift.racks.Where(r => r.owner != null).SelectMany(r => r.devices.Select(d => (r, d))).First(x => x.d.Def.bays > 0 && x.d.Healthy);
             var up = shift.FollowUp(victim.r.label, victim.d, TaskKind.RaidRebuild, Fault.ArrayCritical, "Array critical (screenshot)", "test", 1);
-            if (up != null) { yield return Play(up.tasks[0]); minigame = null; }
+            if (up != null) { yield return Play(up.tasks[0]); CloseMinigame(); }
             var off = shift.FollowUp(victim.r.label, victim.d, TaskKind.PowerOn, Fault.None, "Lost power (screenshot)", "test");
-            if (off != null) { yield return Play(off.tasks[0]); minigame = null; }
+            if (off != null) { yield return Play(off.tasks[0]); CloseMinigame(); }
+            // Every hot-swap flavour on one server: PSU and optic at the rear, memory and fans with the lid off.
+            var srv = shift.racks.Where(r => r.owner != null).SelectMany(r => r.devices.Select(d => (r, d))).First(x => x.d.Def.kind == DevKind.Server && x.d.Def.sfps > 0 && x.d.Healthy);
+            foreach (var kind in new[] { TaskKind.SwapPsu, TaskKind.SwapSfp, TaskKind.SwapDimm, TaskKind.SwapFan })
+            {
+                yield return Play(new WorkTask { kind = kind, rack = srv.r.label, deviceId = srv.d.id, u = srv.d.u });
+                CloseMinigame();
+            }
             screen = GameScreen.Play;
             yield return Shot($"{n++:00}_hud");
             OpenSettings();

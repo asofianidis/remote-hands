@@ -3,64 +3,122 @@ using UnityEngine;
 namespace RH
 {
     /// <summary>
-    /// Slide a heavy device onto the rails at the right U, then drive the screws home. In remove mode
-    /// (decommissioning) it runs backwards: back the screws out, then ease the unit off the rails.
+    /// On the real rack: slide a heavy unit onto the rails at the right U, then drive the screws home
+    /// through the rack ears. In remove mode (decommissioning) it runs backwards: back the screws out,
+    /// then ease the unit off the rails into your arms.
     /// </summary>
     public class RackMountGame : Minigame
     {
+        public override bool InWorld => true;
         public bool remove;
+
         DevDef def;
-        int target, lo;
+        int target;
         bool sliding;
-        float pos, vel, push, jam, misalign, tol;
-        const float UPix = 30f, Rows = 14;
+        float pos, vel, push, jam, misalign, tol, h, yc;
+        Transform unit;
+        GameObject ghost;
 
-        class Screw { public Vector2 p; public float t; public bool done; public float spin; }
+        class Screw { public Transform t; public float phase; public bool done; public float spin; }
         Screw[] screws;
-        Rect panel;
 
-        float RailBottom => P.y + 110 + Rows * UPix;
-        float YofU(float u) => RailBottom - (u - lo) * UPix;
         float ScrewWindow => career.Has("driver2") ? 24f : career.Has("driver") ? 16f : 9f;
+        const float Front = -RackView.Depth / 2f + 0.05f;
 
         protected override void Begin()
         {
             def = Catalog.Dev(task.def);
             target = task.u;
-            lo = Mathf.Clamp(target - 5, 1, Rack.Units - (int)Rows + 1);
             tol = 0.3f;
+            h = def.heightU * RackView.UnitH;
+            yc = RackView.UY(target) + h / 2f;
+            MakeRig(RackV.transform);
+            if (remove) HideOnRack(task.deviceId);
+            BuildUnit();
+            ghost = Box(rig, new Vector3(0, yc, Front + 0.02f), new Vector3(0.5f, h - 0.004f, 0.03f), Mats.Glass(new Color(0.2f, 1f, 0.4f, 0.28f)), "slot");
+            var screwMat = Mats.Lit(new Color(0.75f, 0.77f, 0.8f), 0.6f, 0.8f);
+            float y0 = RackView.UY(target) + h * (def.heightU == 1 ? 0.5f : 0.28f), y1 = RackView.UY(target) + h * 0.72f;
+            var spots = def.heightU == 1
+                ? new[] { new Vector3(-0.262f, y0, Front - 0.012f), new Vector3(0.262f, y0, Front - 0.012f) }
+                : new[] { new Vector3(-0.262f, y0, Front - 0.012f), new Vector3(-0.262f, y1, Front - 0.012f), new Vector3(0.262f, y0, Front - 0.012f), new Vector3(0.262f, y1, Front - 0.012f) };
+            screws = new Screw[spots.Length];
+            for (int i = 0; i < spots.Length; i++)
+            {
+                var g = Box(rig, spots[i], new Vector3(0.011f, 0.011f, 0.006f), screwMat, "screw");
+                screws[i] = new Screw { t = g.transform, phase = 0.1f + i * 0.3f };
+                g.SetActive(remove);
+            }
             if (remove)
             {
                 pos = target;
                 push = 1f;
-                SetupScrews();
-                title = $"De-rack: {def.name} at U{target}";
-                hint = "Back the four screws out: click each screw when the shrinking ring lands on the screw head.";
+                ghost.SetActive(false);
+                ScrewCamera();
+                title = $"De-rack: {def.name} at {task.rack} U{target}";
+                hint = "Back the screws out: click each screw when the shrinking ring lands on the screw head.";
             }
             else
             {
                 sliding = true;
                 pos = target + 4f;
-                title = $"Rack-mount: {def.name} -> U{target}";
-                hint = "Move the mouse to line the unit up with the green slot, then HOLD the left button to slide it in. It's heavy and sags, so keep it steady!";
+                SlideCamera();
+                title = $"Rack-mount: {def.name} into {task.rack} U{target}";
+                hint = "Move the mouse up and down to line the unit up with the green slot, then HOLD the left button to slide it in. It's heavy and sags, so keep it steady!";
             }
+            PlaceUnit();
+        }
+
+        void BuildUnit()
+        {
+            unit = new GameObject("unit").transform;
+            unit.SetParent(rig, false);
+            Box(unit, new Vector3(0, h / 2f, 0.45f), new Vector3(0.53f, h - 0.004f, 0.9f), Mats.Lit(def.color, 0.35f, 0.3f), "body");
+            Box(unit, new Vector3(0, h / 2f, -0.004f), new Vector3(0.48f, h * 0.86f, 0.008f), Mats.Lit(def.color * 1.6f, 0.5f, 0.2f), "face");
+            var ear = Mats.Lit(new Color(0.55f, 0.57f, 0.6f), 0.5f, 0.6f);
+            Box(unit, new Vector3(-0.258f, h / 2f, -0.002f), new Vector3(0.026f, h - 0.004f, 0.004f), ear, "ear");
+            Box(unit, new Vector3(0.258f, h / 2f, -0.002f), new Vector3(0.026f, h - 0.004f, 0.004f), ear, "ear");
+            Box(unit, new Vector3(0.21f, h / 2f, -0.01f), new Vector3(0.01f, 0.01f, 0.004f), Mats.Unlit(new Color(0.3f, 0.6f, 1f)), "led");
+            if (def.bays > 0)
+                for (int i = 0; i < Mathf.Min(def.bays, 6); i++)
+                    Box(unit, new Vector3(-0.17f + i * 0.06f, h * 0.3f, -0.01f), new Vector3(0.008f, 0.008f, 0.004f), Mats.Unlit(new Color(0.2f, 0.9f, 0.3f)), "led");
+        }
+
+        /// <summary>Unit height follows pos (in U); push 0 is fully out in front of the rack, 1 is home.</summary>
+        void PlaceUnit()
+        {
+            unit.localPosition = new Vector3(0, RackView.UY(pos), Front - (1f - push) * 0.95f);
+            float tilt = Mathf.Clamp(vel * 1.5f, -6f, 6f) + (1f - push) * 2.5f;
+            unit.localRotation = Quaternion.Euler(tilt, 0, 0);
+        }
+
+        void SlideCamera() => Look(new Vector3(-0.8f, yc + 0.32f, -1.55f), new Vector3(0.05f, yc - 0.02f, -0.75f));
+
+        void ScrewCamera()
+        {
+            float d = FitDistance(0.72f, Mathf.Max(0.3f, h * 2.5f), 0.85f);
+            Look(new Vector3(0, yc, Front - d), new Vector3(0, yc, Front));
         }
 
         protected override void Update(float dt, Vector2 m)
         {
             if (sliding) Slide(dt, m);
             else Screws(dt, m);
+            PlaceUnit();
         }
 
         void Slide(float dt, Vector2 m)
         {
-            float desired = lo + (RailBottom - m.y) / UPix - def.heightU / 2f;
+            // Where on screen is the slot, and how many pixels is one U there?
+            var p = rig.parent;
+            var slotUi = ToUi(p.TransformPoint(new Vector3(0, yc, Front)));
+            float perU = Mathf.Max(4f, Mathf.Abs(ToUi(p.TransformPoint(new Vector3(0, yc + RackView.UnitH, Front))).y - slotUi.y));
+            float desired = target + (slotUi.y - m.y) / perU;
             float noise = (Mathf.PerlinNoise(time * 0.9f, 3.1f) - 0.5f) * 9f;
             // Coming off the rails the unit hangs on your arms, so it sags harder the further out it is.
             float sag = 2.4f * def.heightU * (remove ? 2f - push : 1f);
             float acc = (desired - pos) * 26f - vel * 7.5f - sag + noise;
             vel += acc * dt;
-            pos = Mathf.Clamp(pos + vel * dt, lo - 1, lo + Rows);
+            pos = Mathf.Clamp(pos + vel * dt, Mathf.Max(0.5f, target - 7), Mathf.Min(Rack.Units + 1, target + 9));
             jam -= dt;
             bool aligned = Mathf.Abs(pos - target) <= tol;
             if (Holding && jam <= 0)
@@ -81,12 +139,16 @@ namespace RH
                 push += (remove ? -1f : 1f) * dt / 1.5f;
             }
             else if (!remove) push = Mathf.Max(0, push - dt * 1.6f);
+            push = Mathf.Clamp01(push);
             if (!remove && push >= 1f)
             {
                 sliding = false;
                 pos = target;
+                vel = 0;
+                ghost.SetActive(false);
+                foreach (var s in screws) s.t.gameObject.SetActive(true);
                 Audio.Play("clunk");
-                SetupScrews();
+                ScrewCamera();
                 hint = "Click each screw when the shrinking ring lands on the screw head.";
             }
             else if (remove && push <= 0f) Win($"{def.name} is off the rails and in your arms.");
@@ -97,21 +159,29 @@ namespace RH
             float speed = career.Has("driver2") ? 0.45f : career.Has("driver") ? 0.55f : 0.8f;
             foreach (var s in screws)
             {
-                if (s.done) { s.spin += dt * 720f; continue; }
-                s.t += dt * speed;
-                if (s.t > 1f) s.t -= 1f;
+                if (s.done) { s.spin += dt * 720f; if (!remove) s.t.localRotation = Quaternion.Euler(0, 0, s.spin); continue; }
+                s.phase += dt * speed;
+                if (s.phase > 1f) s.phase -= 1f;
             }
             if (Pressed)
             {
                 Screw best = null;
                 float bd = 60f;
                 foreach (var s in screws)
-                    if (!s.done && Vector2.Distance(m, s.p) < bd) { bd = Vector2.Distance(m, s.p); best = s; }
+                {
+                    float d = Vector2.Distance(m, ToUi(s.t.position));
+                    if (!s.done && d < bd) { bd = d; best = s; }
+                }
                 if (best != null)
                 {
-                    float r = Ring(best.t);
-                    if (r <= 14f + ScrewWindow && r >= 10f) { best.done = true; Audio.Play("screw"); }
-                    else { best.t = 0f; Audio.Play("bad", 0.4f); }
+                    float r = Ring(best.phase);
+                    if (r <= 14f + ScrewWindow && r >= 10f)
+                    {
+                        best.done = true;
+                        Audio.Play("screw");
+                        if (remove) best.t.gameObject.SetActive(false);
+                    }
+                    else { best.phase = 0f; Audio.Play("bad", 0.4f); }
                 }
             }
             if (!System.Array.TrueForAll(screws, s => s.done)) return;
@@ -119,102 +189,50 @@ namespace RH
             {
                 sliding = true;
                 Audio.Play("clunk");
+                SlideCamera();
                 hint = "Now HOLD the left button to ease it off the rails, keeping it level with the mouse. It gets heavier as it comes out!";
             }
-            else Win($"{def.name} racked at U{target}.");
+            else Win($"{def.name} racked at {task.rack} U{target}.");
         }
 
         static float Ring(float t) => Mathf.Lerp(74f, 4f, t);
 
-        void SetupScrews()
-        {
-            var p = P;
-            float h = Mathf.Max(70f, def.heightU * 60f);
-            panel = new Rect(p.x + 190, p.y + 300 - h / 2, 900, h);
-            float y0 = panel.y + h * 0.28f, y1 = panel.y + h * 0.72f;
-            screws = new[]
-            {
-                new Screw { p = new Vector2(panel.x - 45, y0), t = 0.1f }, new Screw { p = new Vector2(panel.x - 45, y1), t = 0.45f },
-                new Screw { p = new Vector2(panel.xMax + 45, y0), t = 0.7f }, new Screw { p = new Vector2(panel.xMax + 45, y1), t = 0.25f },
-            };
-        }
-
         public override void Draw()
         {
-            Frame();
-            var p = P;
-            if (sliding) DrawSlide(p);
-            else DrawScrews(p);
-        }
-
-        void DrawSlide(Rect p)
-        {
-            float x0 = p.x + 600, x1 = p.x + 1230;
-            // Rack U grid (side view: the rack opens to the left).
-            Ui.Box(new Rect(x0, YofU(lo + Rows), x1 - x0, Rows * UPix), new Color(0.03f, 0.04f, 0.05f, 1f));
-            for (int u = lo; u <= lo + (int)Rows; u++)
+            WorldHud();
+            if (sliding)
             {
-                float y = YofU(u);
-                Ui.Box(new Rect(x0, y - 1, x1 - x0, 1.5f), new Color(0.3f, 0.34f, 0.4f, 0.6f));
-                if (u < lo + Rows) Ui.Label(new Rect(x0 - 70, y - UPix, 60, UPix), $"U{u}", 15, Ui.Dim, TextAnchor.MiddleRight);
+                bool aligned = Mathf.Abs(pos - target) <= tol;
+                // Outline the unit's face so alignment is easy to read against the rack.
+                var face = unit.Find("face");
+                if (face != null) Ui.Border(UiRect(face), jam > 0 ? Ui.Bad : aligned ? Ui.Good : Ui.Warn, 3f);
+                var panel = new Rect(20, 20, 300, 230);
+                Ui.Box(panel, new Color(0.03f, 0.05f, 0.07f, 0.85f));
+                Ui.Label(new Rect(panel.x + 18, panel.y + 14, 260, 24), "ALIGNMENT", 15, Ui.Dim, TextAnchor.UpperLeft, true);
+                float off = pos - target;
+                Ui.Label(new Rect(panel.x + 18, panel.y + 40, 270, 34), aligned ? "ON THE RAILS" : off > 0 ? $"Too high ({off:0.0}U)" : $"Too low ({-off:0.0}U)", 22, aligned ? Ui.Good : Ui.Warn, TextAnchor.UpperLeft, true, false);
+                Ui.Label(new Rect(panel.x + 18, panel.y + 90, 260, 24), remove ? "STILL ON THE RAILS" : "INSERTED", 15, Ui.Dim, TextAnchor.UpperLeft, true);
+                Ui.Bar(new Rect(panel.x + 18, panel.y + 118, 264, 20), push, aligned ? Ui.Good : Ui.Warn);
+                if (jam > 0) Ui.Label(new Rect(panel.x + 18, panel.y + 150, 260, 36), "JAMMED!", 26, Ui.Bad, TextAnchor.UpperLeft, true);
+                else Ui.Label(new Rect(panel.x + 18, panel.y + 150, 270, 70), $"{def.name} ({def.heightU}U)\n{(remove ? "From" : "Target")}: U{target}" + (def.heightU > 1 ? $"-U{target + def.heightU - 1}" : ""), 16, Ui.Text);
+                Tag(rig.parent.TransformPoint(new Vector3(0.33f, yc, Front)), $"U{target}", 18, Ui.Good, 0, 80, TextAnchor.MiddleLeft);
             }
-            var slot = new Rect(x0, YofU(target + def.heightU), x1 - x0, def.heightU * UPix);
-            Ui.Box(slot, new Color(0.2f, 0.9f, 0.4f, 0.18f));
-            Ui.Border(slot, Ui.Good, 2f);
-            // Other gear already in the rack around the slot.
-            var rack = shift.Rack(task.rack);
-            for (int u = lo; u < lo + Rows; u++)
+            else
             {
-                var d = rack.At(u);
-                if (d != null && d.u == u && !(remove && d.id == task.deviceId))
+                foreach (var s in screws)
                 {
-                    var r = new Rect(x0 + 4, YofU(u + d.Def.heightU) + 2, x1 - x0 - 8, d.Def.heightU * UPix - 4);
-                    Ui.Box(r, d.Def.color * 1.5f);
-                    Ui.Label(r, d.Def.name, 14, Ui.Dim, TextAnchor.MiddleCenter);
-                }
-            }
-            // Rail post.
-            Ui.Box(new Rect(x0 - 6, YofU(lo + Rows), 6, Rows * UPix), new Color(0.6f, 0.62f, 0.66f));
-            bool aligned = Mathf.Abs(pos - target) <= tol;
-            float len = 330f;
-            float right = x0 + 20 + push * (x1 - x0 - 40);
-            var dev = new Rect(right - len, YofU(pos + def.heightU), len, def.heightU * UPix);
-            Ui.Box(dev, def.color * 2.2f);
-            Ui.Border(dev, jam > 0 ? Ui.Bad : aligned ? Ui.Good : Ui.Warn, 3f);
-            Ui.Label(dev, def.name, 16, Color.white, TextAnchor.MiddleCenter, true);
-            Ui.Label(new Rect(p.x + 30, p.y + 100, 230, 30), "ALIGNMENT", 16, Ui.Dim, TextAnchor.UpperLeft, true);
-            float off = pos - target;
-            Ui.Label(new Rect(p.x + 30, p.y + 128, 230, 40), Mathf.Abs(off) <= tol ? "ON THE RAILS" : off > 0 ? $"Too high ({off:0.0}U)" : $"Too low ({-off:0.0}U)", 22, aligned ? Ui.Good : Ui.Warn, TextAnchor.UpperLeft, true, false);
-            Ui.Label(new Rect(p.x + 30, p.y + 190, 230, 30), remove ? "STILL ON THE RAILS" : "INSERTED", 16, Ui.Dim, TextAnchor.UpperLeft, true);
-            Ui.Bar(new Rect(p.x + 30, p.y + 220, 220, 22), push, aligned ? Ui.Good : Ui.Warn);
-            if (jam > 0) Ui.Label(new Rect(p.x + 30, p.y + 260, 230, 40), "JAMMED!", 28, Ui.Bad, TextAnchor.UpperLeft, true);
-            Ui.Label(new Rect(p.x + 30, p.y + 320, 230, 200), $"Rack {task.rack}\n{def.name} ({def.heightU}U)\n{(remove ? "From" : "Target")}: U{target}" + (def.heightU > 1 ? $"-U{target + def.heightU - 1}" : ""), 18, Ui.Text);
-        }
-
-        void DrawScrews(Rect p)
-        {
-            Ui.Box(new Rect(panel.x - 90, panel.y - 30, panel.width + 180, panel.height + 60), new Color(0.03f, 0.04f, 0.05f));
-            Ui.Box(panel, def.color * 2f);
-            Ui.Label(panel, def.name + "  " + def.model, 22, Color.white, TextAnchor.MiddleCenter, true);
-            foreach (var side in new[] { panel.x - 80, panel.xMax + 10 })
-                Ui.Box(new Rect(side, panel.y, 70, panel.height), new Color(0.55f, 0.57f, 0.6f));
-            foreach (var s in screws)
-            {
-                // Mounting: a done screw is seated. Removing: a done screw is gone, leaving the empty hole.
-                if (remove && s.done) { Ui.Circle(s.p, 9f, new Color(0.05f, 0.05f, 0.06f)); continue; }
-                Ui.Circle(s.p, 14f, s.done ? new Color(0.75f, 0.78f, 0.8f) : new Color(0.4f, 0.42f, 0.45f));
-                float a = (s.done ? s.spin : 0f) * Mathf.Deg2Rad;
-                var d = new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * 10f;
-                Ui.Segment(s.p - d, s.p + d, new Color(0.15f, 0.15f, 0.17f), 3f);
-                if (!s.done)
-                {
-                    float r = Ring(s.t);
+                    if (s.done) continue;
+                    var c = ToUi(s.t.position);
+                    float r = Ring(s.phase);
                     bool inWin = r <= 14f + ScrewWindow && r >= 10f;
-                    Ui.Ring(s.p, r, inWin ? Ui.Good : Ui.Accent);
+                    Ui.Ring(c, r, inWin ? Ui.Good : Ui.Accent);
+                    Ui.Ring(c, 12f, new Color(1, 1, 1, 0.35f));
                 }
+                int done = System.Array.FindAll(screws, s => s.done).Length;
+                var panel = new Rect(20, 20, 260, 60);
+                Ui.Box(panel, new Color(0.03f, 0.05f, 0.07f, 0.85f));
+                Ui.Label(panel, $"Screws {(remove ? "out" : "in")}: {done}/{screws.Length}", 22, Ui.Text, TextAnchor.MiddleCenter, true);
             }
-            int done = System.Array.FindAll(screws, s => s.done).Length;
-            Ui.Label(new Rect(p.x + 30, p.yMax - 110, 600, 40), $"Screws {(remove ? "out" : "in")}: {done}/4", 22, Ui.Text, TextAnchor.MiddleLeft, true);
         }
     }
 }

@@ -36,6 +36,12 @@ Rack-mounting, drives, memory, fans and consoles are done from the front.
 
 ## Minigames
 
+Every job happens in the world. Physical jobs move the camera in close to the real rack, bench or
+meet-me room frame and build the parts you work on in 3D: drive sleds and latches, rack screws,
+connectors and cables, PSUs, DIMMs, fans, power cords on the PDU strips. For memory and fans the
+server slides out on its rails with the lid off. Console jobs (diagnosis, firmware, RAID, power-on)
+roll a crash cart up to the rack and run on its monitor.
+
 - **Rack-mount / de-rack**: slide a heavy, sagging unit onto the rails at the right U and land the
   screws, or back the screws out and ease it off the rails.
 - **Cabling**: follow the work order to patch every port to the right switch port and PDU outlet.
