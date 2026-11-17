@@ -13,6 +13,8 @@ namespace RH
         float lastClick;
 
         public static float Volume = 0.8f;
+        /// <summary>How loud the fan roar should be where the player stands (0..1), set by the game each frame.</summary>
+        public static float HumLevel = 0.5f;
 
         void Awake()
         {
@@ -32,11 +34,14 @@ namespace RH
             clips["screw"] = Tone(0.22f, t => (Noise() * 0.3f + Sq(t, 340 + t * 900)) * 0.18f * Env(t, 0.22f));
             clips["plug"] = Tone(0.08f, t => (Noise() * 0.5f + Sine(t, 2400)) * 0.4f * Mathf.Exp(-t * 60f));
             clips["pickup"] = Tone(0.15f, t => (Noise() * 0.4f + Sine(t, 220)) * 0.35f * Mathf.Exp(-t * 20f));
+            clips["shutter"] = Tone(0.16f, t => Noise() * 0.5f * (t < 0.03f ? 1f : t > 0.09f && t < 0.12f ? 0.8f : 0.05f));
+            clips["alarm"] = Tone(0.6f, t => Sine(t, (int)(t / 0.15f) % 2 == 0 ? 990 : 740) * 0.3f * Env(t, 0.6f));
         }
 
         void Update()
         {
             AudioListener.volume = Volume;
+            hum.volume = Mathf.MoveTowards(hum.volume, 0.08f + HumLevel * 0.32f, Time.unscaledDeltaTime * 0.4f);
         }
 
         public static void Play(string name, float vol = 1f)
