@@ -30,8 +30,22 @@ namespace RH
             if (Ui.Button(new Rect(x, y + 34, 60, 44), "<", q > 0, 22)) SetQuality(q - 1);
             Ui.Label(new Rect(x + 70, y + 34, w - 140, 44), names.Length > 0 ? names[q] : "Default", 21, Ui.Accent, TextAnchor.MiddleCenter, true);
             if (Ui.Button(new Rect(x + w - 60, y + 34, 60, 44), ">", q < names.Length - 1, 22)) SetQuality(q + 1);
-            y += 110;
-            Ui.Label(new Rect(x, y, w, 120), "Lower quality turns off shadows and anti-aliasing for older machines.", 16, Ui.Dim);
+            y += 90;
+            Ui.Label(new Rect(x, y, w, 30), "Display mode", 19, Ui.Text);
+            int m = System.Array.IndexOf(DisplayModes, Screen.fullScreenMode);
+            if (m < 0) m = 0;
+            if (Ui.Button(new Rect(x, y + 34, 60, 44), "<", m > 0, 22)) SetDisplay(DisplayModes[m - 1], ResolutionIndex());
+            Ui.Label(new Rect(x + 70, y + 34, w - 140, 44), DisplayModeNames[m], 21, Ui.Accent, TextAnchor.MiddleCenter, true);
+            if (Ui.Button(new Rect(x + w - 60, y + 34, 60, 44), ">", m < DisplayModes.Length - 1, 22)) SetDisplay(DisplayModes[m + 1], ResolutionIndex());
+            y += 90;
+            var res = Resolutions();
+            int ri = ResolutionIndex();
+            Ui.Label(new Rect(x, y, w, 30), "Resolution", 19, Ui.Text);
+            if (Ui.Button(new Rect(x, y + 34, 60, 44), "<", ri > 0, 22)) SetDisplay(Screen.fullScreenMode, ri - 1);
+            Ui.Label(new Rect(x + 70, y + 34, w - 140, 44), $"{res[ri].x} x {res[ri].y}", 21, Ui.Accent, TextAnchor.MiddleCenter, true);
+            if (Ui.Button(new Rect(x + w - 60, y + 34, 60, 44), ">", ri < res.Length - 1, 22)) SetDisplay(Screen.fullScreenMode, ri + 1);
+            y += 100;
+            Ui.Label(new Rect(x, y, w, 80), "Lower quality turns off shadows and anti-aliasing for older machines. Alt+Enter toggles full screen.", 16, Ui.Dim);
 
             // Right column: controls.
             x = r.x + 560;
@@ -67,6 +81,54 @@ namespace RH
                 }
             }
             if (Ui.Button(new Rect(r.x + 40, r.yMax - 90, 300, 60), "Done", rebinding < 0, 24, Ui.Good)) CloseSettings();
+        }
+
+        static readonly FullScreenMode[] DisplayModes = { FullScreenMode.Windowed, FullScreenMode.FullScreenWindow, FullScreenMode.ExclusiveFullScreen };
+        static readonly string[] DisplayModeNames = { "Windowed", "Borderless full screen", "Exclusive full screen" };
+
+        /// <summary>Resolution picked in this session; Screen.width lags a frame behind SetResolution.</summary>
+        Vector2Int? pickedResolution;
+        Vector2Int[] resolutionCache;
+
+        /// <summary>The monitor's supported resolutions, one entry per size (refresh rates folded), smallest first.</summary>
+        Vector2Int[] Resolutions()
+        {
+            if (resolutionCache != null) return resolutionCache;
+            var list = new System.Collections.Generic.List<Vector2Int>();
+            foreach (var r in Screen.resolutions)
+            {
+                var v = new Vector2Int(r.width, r.height);
+                if (v.x >= 800 && v.y >= 600 && !list.Contains(v)) list.Add(v);
+            }
+            if (list.Count == 0) list.Add(new Vector2Int(Screen.width, Screen.height));
+            list.Sort((a, b) => a.x != b.x ? a.x.CompareTo(b.x) : a.y.CompareTo(b.y));
+            return resolutionCache = list.ToArray();
+        }
+
+        /// <summary>Index of the current (or just picked) resolution, or the closest match by pixel count.</summary>
+        int ResolutionIndex()
+        {
+            var res = Resolutions();
+            var actual = new Vector2Int(Screen.width, Screen.height);
+            if (pickedResolution == actual) pickedResolution = null; // applied; follow the real window again
+            var cur = pickedResolution ?? actual;
+            int best = 0;
+            long bestDiff = long.MaxValue;
+            for (int i = 0; i < res.Length; i++)
+            {
+                long diff = System.Math.Abs((long)res[i].x * res[i].y - (long)cur.x * cur.y) + System.Math.Abs(res[i].x - cur.x);
+                if (diff < bestDiff) { bestDiff = diff; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Apply a display mode and resolution. Unity remembers both between launches.</summary>
+        void SetDisplay(FullScreenMode mode, int resIndex)
+        {
+            var res = Resolutions();
+            resIndex = Mathf.Clamp(resIndex, 0, res.Length - 1);
+            pickedResolution = res[resIndex];
+            Screen.SetResolution(res[resIndex].x, res[resIndex].y, mode);
         }
 
         void SetQuality(int q)
