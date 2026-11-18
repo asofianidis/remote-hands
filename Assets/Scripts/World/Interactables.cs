@@ -8,6 +8,8 @@ namespace RH
     {
         public abstract string Prompt(Game g);
         public abstract void Use(Game g);
+        /// <summary>Whether looking at it offers anything right now (floor-level stations only do when there's work).</summary>
+        public virtual bool Active(Game g) => true;
     }
 
     /// <summary>A rack in the hall. Rebuilds its installed equipment from the shift model.</summary>
@@ -62,12 +64,15 @@ namespace RH
                 Mats.Box(content, new Vector3(-0.252f, y, front - 0.0045f), new Vector3(0.008f, h * 0.8f, 0.002f), Mats.Unlit(Catalog.CustColor(d.owner)), false, false);
                 var green = Mats.Unlit(new Color(0.2f, 0.9f, 0.3f));
                 var amber = Mats.Unlit(new Color(1f, 0.6f, 0.05f));
+                var blue = Mats.Unlit(new Color(0.25f, 0.5f, 1f));
+                // A predictive failure shows the controller's blue LOCATE light instead of amber.
+                bool locate = d.failedBay >= 0 && shift.TasksAt(rack.label).Any(x => x.task.deviceId == d.id && x.task.kind == TaskKind.SwapDrive && x.task.component == "locate");
                 for (int i = 0; i < def.bays; i++)
                 {
                     // An activity light in the top corner of each drive sled; the failed one shows amber.
                     Catalog.Bay(def, i, out var c, out var s);
                     bool bad = d.failedBay == i;
-                    var led = Mats.Box(content, new Vector3(c.x + s.x * 0.35f, y0 + c.y + s.y * 0.28f, front - 0.0065f), new Vector3(0.004f, 0.004f, 0.002f), bad ? amber : green, false, false);
+                    var led = Mats.Box(content, new Vector3(c.x + s.x * 0.35f, y0 + c.y + s.y * 0.28f, front - 0.0065f), new Vector3(0.004f, 0.004f, 0.002f), bad ? (locate ? blue : amber) : green, false, false);
                     if (bad) blinkers.Add(led.GetComponent<Renderer>());
                 }
                 bool off = d.fault == Fault.NoPower;
@@ -81,10 +86,33 @@ namespace RH
             }
             if (rack.devices.Count > 0 && !hideCords)
             {
-                // Data cables gathered into a bundle running up to the overhead tray.
+                // Data cables gathered into a bundle running up to the overhead tray: in the cable manager
+                // when the rack is tidy, hanging loose across the back when it isn't.
                 float lowY = UY(rack.devices.Min(d => d.u));
-                Mats.Box(content, new Vector3(-0.15f, (lowY + Height) / 2f, Depth / 2 - 0.1f), new Vector3(0.05f, Height - lowY, 0.04f), Mats.Lit(new Color(0.2f, 0.45f, 0.85f), 0.3f), false, false, "cable bundle");
+                var cable = Mats.Lit(new Color(0.2f, 0.45f, 0.85f), 0.3f);
+                if (rack.tidy) Mats.Box(content, new Vector3(-0.236f, (lowY + Height) / 2f, Depth / 2 - 0.07f), new Vector3(0.04f, Height - lowY, 0.035f), cable, false, false, "cable bundle");
+                else
+                {
+                    Mats.Box(content, new Vector3(-0.15f, (lowY + Height) / 2f, Depth / 2 - 0.1f), new Vector3(0.05f, Height - lowY, 0.04f), cable, false, false, "cable bundle");
+                    for (int i = 0; i < 3; i++)
+                    {
+                        float ly = Mathf.Lerp(lowY + 0.1f, Height - 0.3f, i / 2f);
+                        var loop = Mats.Box(content, new Vector3(-0.02f + i * 0.04f, ly, Depth / 2 - 0.06f), new Vector3(0.24f, 0.008f, 0.008f), Mats.Lit(new Color(0.95f, 0.8f, 0.2f), 0.3f), false, false, "loose cable");
+                        loop.transform.localRotation = Quaternion.Euler(0, 0, -25f + i * 22f);
+                    }
+                }
             }
+            // Blanking panels over every empty slot, except where someone left a gap (or an install is due):
+            // one 1U plate each, lighter than the dark hole an open gap leaves.
+            if (rack.owner != null)
+            {
+                var blank = Mats.Lit(new Color(0.2f, 0.215f, 0.24f), 0.3f, 0.4f);
+                for (int u = 1; u <= Rack.Units; u++)
+                    if (rack.At(u) == null && !rack.Reserved(u) && !rack.openGaps.Contains(u))
+                        Mats.Box(content, new Vector3(0, UY(u) + UnitH / 2f, front - 0.002f), new Vector3(0.482f, UnitH - 0.003f, 0.006f), blank, false, false, "blanking");
+            }
+            if (rack.hot)
+                Mats.Text(content, new Vector3(0, Height + 0.2f, -Depth / 2 + 0.05f), $"INLET {30 + rack.openGaps.Count}°C", 0.08f, new Color(1f, 0.45f, 0.25f));
             // Ghost markers where open tickets want equipment installed.
             foreach (var (ticket, task) in shift.TasksAt(rack.label))
             {
@@ -141,7 +169,7 @@ namespace RH
         public override void Use(Game g) => g.OpenRack(label);
     }
 
-    /// <summary>Storage-room stock: equipment or spare parts, never runs out.</summary>
+    /// <summary>Storage-room stock: rack equipment never runs out; spare parts do, and get ordered from the tablet.</summary>
     public class StockShelf : Interactable
     {
         public string def;
@@ -153,7 +181,12 @@ namespace RH
         public override string Prompt(Game g)
         {
             string e = Keys.Label(Keys.Action.Interact);
-            if (isPart) return g.shift.inv.PouchFull ? $"Tool pouch full ({g.shift.inv.pouchCap})" : $"[{e}] Take a {ItemName}";
+            if (isPart)
+            {
+                int n = g.career.Stock(part);
+                if (n == 0) return $"{ItemName}: OUT OF STOCK. Order more on the tablet's STOCK page";
+                return g.shift.inv.PouchFull ? $"Tool pouch full ({g.shift.inv.pouchCap})" : $"[{e}] Take a {ItemName}  ({n} on the shelf)";
+            }
             return g.shift.inv.HandsFull ? "Your hands are full. Return or install what you're carrying first" : $"[{e}] Take the {ItemName}";
         }
 
@@ -174,6 +207,8 @@ namespace RH
         {
             var inv = g.shift.inv;
             string e = Keys.Label(Keys.Action.Interact);
+            if (inv.rma.Count > 0)
+                return $"[{e}] Send {inv.rma.Count} failed part{(inv.rma.Count > 1 ? "s" : "")} back under RMA (+{Ui.Money(inv.rma.Sum(p => Mathf.RoundToInt(Catalog.PartPrice(p) * Catalog.RmaCredit)))} credit)";
             if (inv.hands.Count > 0)
             {
                 var it = inv.hands[inv.hands.Count - 1];
@@ -198,6 +233,9 @@ namespace RH
     public class Station : Interactable
     {
         public string id, title;
+        public bool onlyWithWork;
+
+        public override bool Active(Game g) => !onlyWithWork || g.shift.TasksAtStation(id).Any(x => !x.task.done);
 
         public override string Prompt(Game g)
         {
@@ -205,6 +243,6 @@ namespace RH
             return $"[{Keys.Label(Keys.Action.Interact)}] {title}" + (open > 0 ? $"  -  {open} task{(open > 1 ? "s" : "")} here" : "");
         }
 
-        public override void Use(Game g) => g.OpenStation(id);
+        public override void Use(Game g) => g.OpenStation(id, title);
     }
 }

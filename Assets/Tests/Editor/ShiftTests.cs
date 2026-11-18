@@ -37,8 +37,12 @@ namespace RH.Tests
                 Assert.IsNotNull(k, t.ToString());
                 Assert.IsNotEmpty(k.tasks, t.ToString());
                 Assert.Greater(k.pay, 0);
-                Assert.IsNotNull(s.Rack(k.rack));
+                // Facility work (receiving, a power failure) isn't tied to a rack: it all happens at stations.
+                if (k.rack != null) Assert.IsNotNull(s.Rack(k.rack), t.ToString());
+                else Assert.IsTrue(k.tasks.All(x => x.station != null), t.ToString());
                 foreach (var task in k.tasks) Assert.IsNotEmpty(Shift.Describe(task));
+                foreach (var task in k.tasks.Where(x => !Shift.WorldJob(x.kind) && x.kind != TaskKind.Ship && x.kind != TaskKind.Mop && x.kind != TaskKind.ResetAlarm))
+                    Assert.IsNotNull(Minigame.For(task), $"{t}: {task.kind} has a job to play");
             }
         }
 
@@ -122,7 +126,8 @@ namespace RH.Tests
                     s.inv.hands.Add(new Item { def = "kvm" });
                 }
                 s.Complete(t.tasks[0]);
-                Assert.AreEqual(2, t.tasks.Count);
+                // (Customers who want evidence also get a photo task, kept last.)
+                Assert.AreEqual(2, t.tasks.Count(x => x.kind != TaskKind.Photo));
                 var fix = t.tasks[1];
                 var expected = fault switch
                 {
@@ -139,6 +144,7 @@ namespace RH.Tests
                 Assert.IsNull(s.Blocker(fix));
                 s.Complete(fix);
                 Assert.AreEqual(Fault.None, dev.fault);
+                foreach (var photo in t.tasks.Where(x => x.kind == TaskKind.Photo).ToList()) s.Complete(photo);
                 Assert.AreEqual(TicketStatus.Done, t.status);
             }
             Assert.IsTrue(seen.Contains(Fault.BadDimm) && seen.Contains(Fault.FanFail), "memory and fan faults are real causes now");
@@ -405,7 +411,7 @@ namespace RH.Tests
             if (diag.cart) s.inv.hands.Add(new Item { def = "kvm" });
             s.Complete(diag);
             s.inv.pouch.AddRange(Catalog.Parts);
-            s.Complete(fresh.tasks[1]);
+            foreach (var task in fresh.tasks.ToList()) s.Complete(task);
             Assert.AreEqual(Mathf.RoundToInt(fresh.pay * mul * 1.2f * 1.25f), s.career.money - money);
         }
 
@@ -470,6 +476,385 @@ namespace RH.Tests
             c.upgrades.Add("cert_power");
             CollectionAssert.Contains(s.Available(), TicketType.CrossConnect);
             CollectionAssert.Contains(s.Available(), TicketType.PowerAudit);
+        }
+
+        // ================================================================ stock, RMA and receiving
+        static Ticket Spawn(Shift s, TicketType type, System.Func<Ticket, bool> want = null, int tries = 60)
+        {
+            for (int i = 0; i < tries; i++)
+            {
+                var t = s.SpawnTicket(type);
+                if (t != null && (want == null || want(t))) return t;
+                if (t != null) s.tickets.Remove(t);
+            }
+            return null;
+        }
+
+        [Test]
+        public void SpareShelvesRunOutAndOrdersArriveAsAReceivingTicket()
+        {
+            var career = new Career { day = 5, money = 1000 };
+            var s = NewShift(career: career);
+            Assert.AreEqual(Catalog.StartStock(PartKind.Drive), career.Stock(PartKind.Drive), "a new career starts with stocked shelves");
+            career.AddStock(PartKind.Drive, -career.Stock(PartKind.Drive) + 1);
+            Assert.IsTrue(s.TakePart(PartKind.Drive));
+            Assert.IsFalse(s.TakePart(PartKind.Drive), "the shelf is empty");
+            Assert.AreEqual(0, career.Stock(PartKind.Drive));
+            s.ReturnPart(PartKind.Drive);
+            Assert.AreEqual(1, career.Stock(PartKind.Drive), "unused parts go back on the shelf");
+            Assert.IsNull(s.Order(PartKind.Drive, 5));
+            Assert.AreEqual(1000 - 5 * Catalog.PartPrice(PartKind.Drive), career.money);
+            Assert.IsNotNull(s.Order(PartKind.Psu, 100), "can't order what you can't pay for");
+            s.End();
+
+            var next = NewShift(career: career, seed: 9);
+            next.GenerateQueue();
+            var recv = next.tickets.Single(t => t.type == TicketType.Receiving);
+            Assert.AreEqual(5, recv.cartons.Where(c => !c.foreign).Sum(c => c.qty), "the whole order is on the pallet");
+            Assert.IsEmpty(career.orders);
+            int before = career.Stock(PartKind.Drive);
+            foreach (var c in recv.cartons) c.decision = c.Good ? 1 : 2;
+            next.Complete(recv.tasks[0]);
+            int good = recv.cartons.Where(c => c.Good && c.part == PartKind.Drive).Sum(c => c.qty);
+            int bad = recv.cartons.Where(c => c.damaged && !c.foreign).Sum(c => c.qty);
+            Assert.AreEqual(before + good, career.Stock(PartKind.Drive), "accepted cartons go on the shelf");
+            Assert.AreEqual(bad, career.Ordered(PartKind.Drive), "refused damaged cartons are re-shipped");
+        }
+
+        [Test]
+        public void FailedPartsGoInRmaBagsAndEarnCredit()
+        {
+            var s = NewShift();
+            var t = s.SpawnTicket(TicketType.ReplaceHardware);
+            var part = t.tasks[0].kind == TaskKind.SwapDrive ? PartKind.Drive : PartKind.Psu;
+            Assert.IsTrue(s.TakePart(part));
+            s.Complete(t.tasks[0]);
+            Assert.AreEqual(1, s.inv.rma.Count, "the failed part comes out in an RMA bag");
+            s.inv.pouchCap = 1;
+            Assert.IsTrue(s.inv.PouchFull, "RMA bags take pouch space");
+            int money = s.career.money;
+            int credit = s.ReturnRma();
+            Assert.AreEqual(Mathf.RoundToInt(Catalog.PartPrice(part) * Catalog.RmaCredit), credit);
+            Assert.AreEqual(money + credit, s.career.money);
+            Assert.IsEmpty(s.inv.rma);
+        }
+
+        [Test]
+        public void ProcurementSendsAnEmergencySpareWhenAShelfIsEmpty()
+        {
+            var career = new Career { day = 5 };
+            var s = NewShift(career: career);
+            career.AddStock(PartKind.Fan, -99);
+            s.End();
+            var next = NewShift(career: career, seed: 4);
+            next.GenerateQueue();
+            Assert.AreEqual(1, career.Stock(PartKind.Fan));
+            StringAssert.Contains("emergency spare", next.news);
+        }
+
+        // ================================================================ new ticket types
+        [Test]
+        public void SwitchOutagesTakeTheRackDownUntilFixed()
+        {
+            var seen = new System.Collections.Generic.HashSet<Fault>();
+            for (int seed = 1; seed < 40; seed++)
+            {
+                var s = NewShift(5, seed);
+                var t = s.SpawnTicket(TicketType.SwitchOutage);
+                Assert.AreEqual(1, t.priority);
+                var rack = s.Rack(t.rack);
+                var sw = Shift.SwitchOf(rack);
+                Assert.AreEqual(sw.id, t.tasks[0].deviceId);
+                Assert.IsTrue(Shift.Isolated(rack), "the whole rack is cut off");
+                seen.Add(sw.fault);
+                if (t.tasks[0].cart) s.inv.hands.Add(new Item { def = "kvm" });
+                var fault = sw.fault;
+                s.Complete(t.tasks[0]);
+                var fix = t.tasks.First(x => x.kind != TaskKind.Diagnose && x.kind != TaskKind.Photo);
+                Assert.AreEqual(fault == Fault.ConfigLost ? TaskKind.ConfigRestore : fault == Fault.BadSfp ? TaskKind.SwapSfp : TaskKind.PowerCycle, fix.kind);
+                s.inv.pouch.Add(PartKind.Sfp);
+                if (fix.cart) s.inv.hands.Add(new Item { def = "kvm" });
+                s.Complete(fix);
+                Assert.IsFalse(Shift.Isolated(rack));
+            }
+            Assert.IsTrue(seen.Contains(Fault.ConfigLost));
+        }
+
+        [Test]
+        public void StorageServiceSwapsALocatedDriveOrASasPath()
+        {
+            bool locate = false, sas = false;
+            for (int seed = 1; seed < 30 && !(locate && sas); seed++)
+            {
+                var s = NewShift(5, seed);
+                var t = s.SpawnTicket(TicketType.StorageService);
+                if (t == null) continue;
+                var task = t.tasks[0];
+                Assert.AreEqual("ds4u", s.Dev(t.rack, task.deviceId).def);
+                if (task.kind == TaskKind.SasPath) { sas = true; Assert.IsTrue(Shift.RearJob(task.kind)); }
+                else { locate = true; Assert.AreEqual("locate", task.component); Assert.IsFalse(s.Dev(t.rack, task.deviceId).Healthy); }
+            }
+            Assert.IsTrue(locate && sas, "both kinds of shelf work show up");
+        }
+
+        [Test]
+        public void BlankingPanelsCoolAHotRack()
+        {
+            var s = NewShift(6);
+            var t = Spawn(s, TicketType.Cooling, k => k.tasks[0].kind == TaskKind.Blanking);
+            Assert.IsNotNull(t);
+            var rack = s.Rack(t.rack);
+            Assert.IsTrue(rack.hot);
+            Assert.GreaterOrEqual(rack.openGaps.Count, 3);
+            foreach (int u in rack.openGaps) Assert.IsNull(rack.At(u), "gaps are empty slots");
+            s.Complete(t.tasks[0]);
+            Assert.IsFalse(rack.hot);
+            Assert.IsEmpty(rack.openGaps);
+        }
+
+        [Test]
+        public void DecommissioningLeavesGapsAndInstallsCloseThem()
+        {
+            var s = NewShift();
+            var t = s.SpawnTicket(TicketType.Decommission);
+            var rack = s.Rack(t.rack);
+            var un = t.tasks.First(x => x.kind == TaskKind.Uncable);
+            int u = un.u;
+            s.Complete(un);
+            s.Complete(t.tasks.First(x => x.kind == TaskKind.Unmount && x.deviceId == un.deviceId));
+            Assert.Contains(u, rack.openGaps, "nobody blanks the slot on the way out");
+        }
+
+        [Test]
+        public void FloorTileLayoutsStartWarmAndCanBeBalanced()
+        {
+            for (int seed = 1; seed < 25; seed++)
+            {
+                var s = NewShift(6, seed);
+                var t = Spawn(s, TicketType.Cooling, k => k.tasks[0].kind == TaskKind.Tiles);
+                if (t == null) continue;
+                var task = t.tasks[0];
+                Assert.AreEqual($"aisle{task.u}", task.station);
+                var l = Shift.Tiles(s.racks, task.u, task.slot);
+                Assert.IsTrue(Enumerable.Range(0, l.Cols).Any(i => Shift.InletTemp(l, i) > 27f), "someone left the tiles wrong");
+                int perf = 0, need = 0;
+                foreach (var p in l.perf) if (p) perf++;
+                for (int i = 0; i < l.Cols; i++) need += Shift.TilesNeeded(l.racks[i]);
+                Assert.AreEqual(need, perf, "there are exactly enough perforated tiles");
+                System.Array.Clear(l.perf, 0, l.perf.Length);
+                for (int i = 0; i < l.Cols; i++) for (int d = 0; d < Shift.TilesNeeded(l.racks[i]); d++) l.perf[i, d] = true;
+                Assert.IsTrue(Enumerable.Range(0, l.Cols).All(i => Shift.InletTemp(l, i) <= 27f), "tiles in front of the racks that need them fix it");
+                s.Complete(task);
+                Assert.IsFalse(s.racks.Any(r => r.row == task.u && r.hot));
+            }
+        }
+
+        [Test]
+        public void HotRacksCookTheirFans()
+        {
+            var s = NewShift(6);
+            foreach (var r in s.racks) r.hot = r.owner != null;
+            int fans = 0;
+            for (int i = 0; i < 20; i++)
+            {
+                var t = s.SpawnTicket(TicketType.FixIssue);
+                if (t != null && s.Dev(t.rack, t.tasks[0].deviceId).fault == Fault.FanFail) fans++;
+            }
+            Assert.Greater(fans, 5, "hot racks mostly fail with fans");
+        }
+
+        [Test]
+        public void CableAuditsTidyTheRack()
+        {
+            var s = NewShift(6);
+            var t = s.SpawnTicket(TicketType.CableAudit);
+            var rack = s.Rack(t.rack);
+            Assert.IsFalse(rack.tidy);
+            Assert.IsTrue(Shift.RearJob(t.tasks[0].kind));
+            s.Complete(t.tasks[0]);
+            Assert.IsTrue(rack.tidy);
+            Assert.AreEqual(1, s.career.stats.racksTidied);
+        }
+
+        [Test]
+        public void VisitorsWithTheRightIdGetEscortedIn()
+        {
+            var s = NewShift();
+            var t = Spawn(s, TicketType.Escort, k => k.tasks[0].component == "allow");
+            var badge = t.tasks[0];
+            var walkIn = t.tasks[1];
+            var walkOut = t.tasks[2];
+            Assert.AreEqual("kiosk", badge.station);
+            Assert.IsNotNull(s.Blocker(walkIn), "badge them in first");
+            badge.cart = true;
+            s.Complete(badge);
+            Assert.IsTrue(t.Open);
+            Assert.IsNotNull(s.Blocker(walkIn), "the escort itself happens in the world");
+            Assert.IsTrue(Shift.WorldJob(walkIn.kind));
+            s.Complete(walkIn);
+            s.Complete(walkOut);
+            Assert.AreEqual(TicketStatus.Done, t.status);
+            Assert.AreEqual(1, s.career.stats.visitors);
+        }
+
+        [Test]
+        public void ImpostorsTurnedAwayCloseTheTicket()
+        {
+            var s = NewShift();
+            var t = Spawn(s, TicketType.Escort, k => k.tasks[0].component == "deny", 200);
+            Assert.IsNotNull(t);
+            Assert.IsNotNull(t.tasks[0].version, "there's a reason they shouldn't get in");
+            t.tasks[0].cart = false;
+            s.Complete(t.tasks[0]);
+            Assert.AreEqual(TicketStatus.Done, t.status);
+            Assert.AreEqual(1, s.career.stats.impostorsCaught);
+        }
+
+        [Test]
+        public void MaintenanceOffersAreOptionalAndProtectTheRack()
+        {
+            var career = new Career { day = 5 };
+            var s = NewShift(career: career);
+            s.GenerateQueue();
+            Assert.IsNotEmpty(s.offers);
+            Assert.IsFalse(s.tickets.Any(t => t.type == TicketType.Maintenance), "offers aren't on the work order until accepted");
+            var offer = s.offers[0];
+            s.AcceptOffer(offer);
+            Assert.Contains(offer, s.tickets);
+            foreach (var task in offer.tasks) s.Complete(task);
+            Assert.AreEqual(TicketStatus.Done, offer.status);
+            Assert.AreEqual(career.day, s.Rack(offer.rack).pmDay);
+            Assert.Greater(career.stats.caughtEarly, 0);
+            float rep = career.rep;
+            int open = s.OpenTickets.Count();
+            s.End();
+            Assert.AreEqual(rep - 4f * open, career.rep, 0.001f, "lapsed offers cost nothing");
+        }
+
+        // ================================================================ customers
+        [Test]
+        public void EvidenceCustomersWantAPhotoAndUrgentOnesAreP2()
+        {
+            var s = NewShift();
+            var bank = Spawn(s, TicketType.ReplaceHardware, k => k.customer == "Northwind Bank", 300);
+            Assert.IsNotNull(bank);
+            Assert.IsTrue(bank.tasks.Any(x => x.kind == TaskKind.Photo && x.component == "front"));
+            var games = Spawn(s, TicketType.Firmware, k => k.customer == "Orbital Games", 300);
+            Assert.IsNotNull(games);
+            Assert.AreEqual(2, games.priority, "everything is urgent for them");
+            var c = new Career();
+            c.ChangeSat("Quanta Retail", 10f);
+            c.ChangeSat("Helix Genomics", 10f);
+            Assert.AreEqual(75f, c.Sat("Quanta Retail"), 0.01f, "fickle customers swing harder");
+            Assert.AreEqual(70f, c.Sat("Helix Genomics"), 0.01f);
+            Assert.Greater(c.CustMul("Helix Genomics"), new Career().CustMul("Kestrel Insurance"), "generous customers tip more");
+        }
+
+        // ================================================================ progression
+        [Test]
+        public void TheTraineeFinishesSimpleTicketsForLessPay()
+        {
+            var career = new Career { day = 8, xp = Catalog.LevelXp[Catalog.TraineeLevel - 1] };
+            var s = NewShift(career: career);
+            Assert.IsTrue(s.HasTrainee);
+            var t = s.SpawnTicket(TicketType.Firmware);
+            var p1 = s.SpawnTicket(TicketType.FixIssue);
+            Assert.IsNotNull(s.TraineeBlocker(p1), "incidents are too tricky");
+            Assert.IsTrue(s.AssignTrainee(t));
+            Assert.IsNotNull(s.TraineeBlocker(s.SpawnTicket(TicketType.Firmware)), "one ticket at a time");
+            int money = career.money;
+            s.Tick(1000f);
+            Assert.AreEqual(TicketStatus.Done, t.status);
+            Assert.Greater(career.money, money);
+            Assert.AreEqual(1, career.traineeDone);
+            Assert.IsFalse(p1.neglected, "the trainee's work doesn't cost your P1 its rush bonus");
+        }
+
+        [Test]
+        public void TheWeeklyReviewPaysForGoalsMet()
+        {
+            var career = new Career { day = 7, weekStart = 1, money = 0 };
+            career.goals.Add(new Goal { id = "clean", target = 2, progress = 2 });
+            career.goals.Add(new Goal { id = "nofollow" });
+            career.goals.Add(new Goal { id = "earn", target = 5000, progress = 10 });
+            var s = NewShift(career: career);
+            s.End();
+            Assert.AreEqual(2 * Catalog.GoalCash, career.money, "two of three goals met");
+            Assert.IsEmpty(career.goals, "a new week starts");
+            Assert.IsNotEmpty(s.endNotes);
+            var next = NewShift(career: career, seed: 3);
+            next.GenerateQueue();
+            Assert.AreEqual(3, career.goals.Count);
+            Assert.AreEqual(8, career.weekStart);
+        }
+
+        [Test]
+        public void AchievementsUnlockAsTheCareerGrows()
+        {
+            var s = NewShift();
+            var t = s.SpawnTicket(TicketType.Firmware);
+            foreach (var task in t.tasks) s.Complete(task);
+            CollectionAssert.Contains(s.career.achievements, "first");
+            CollectionAssert.Contains(s.unlocked, "first");
+            Assert.AreEqual(1, s.career.stats.streak);
+        }
+
+        [Test]
+        public void TheExpansionCagesOpenForALeadTechnician()
+        {
+            var career = new Career { day = 9, xp = Catalog.LevelXp[Catalog.ExpansionLevel - 1] };
+            var s = NewShift(career: career);
+            Assert.AreEqual(Shift.RacksPerRow, Shift.ColsOf(s.racks));
+            s.GenerateQueue();
+            Assert.AreEqual(Shift.RacksPerRow + Shift.ExpansionCols, Shift.ColsOf(s.racks));
+            Assert.AreEqual(Shift.Rows.Length * (Shift.RacksPerRow + Shift.ExpansionCols), s.racks.Count);
+            StringAssert.Contains("expansion", s.news);
+        }
+
+        // ================================================================ emergencies
+        [Test]
+        public void APowerFailureNeedsTheGeneratorBeforeTheUpsRunsOut()
+        {
+            var s = NewShift(8);
+            var t = s.TriggerEmergency("power");
+            Assert.AreEqual(1, t.priority);
+            Assert.IsNull(t.rack);
+            Assert.AreEqual(Shift.UpsSeconds, s.ups, 0.01f);
+            s.Tick(10f);
+            s.Complete(t.tasks[0]);
+            Assert.AreEqual(0f, s.ups);
+            Assert.AreEqual(TicketStatus.Done, t.status);
+            Assert.AreEqual(1, s.career.stats.emergencies);
+
+            var late = NewShift(8, 2);
+            var t2 = late.TriggerEmergency("power");
+            float rep = late.career.rep;
+            late.Tick(Shift.UpsSeconds + 1f);
+            Assert.AreEqual(TicketStatus.HandedOver, t2.status, "the hall went dark");
+            Assert.AreEqual(rep - 12f, late.career.rep, 0.001f);
+        }
+
+        [Test]
+        public void LeaksAndSmokeAlarmsGoInOrder()
+        {
+            var s = NewShift(8);
+            var leak = s.TriggerEmergency("leak");
+            var valve = leak.tasks.First(x => x.kind == TaskKind.Valve);
+            var mop = leak.tasks.First(x => x.kind == TaskKind.Mop);
+            Assert.AreEqual($"crac{Shift.CracFor(valve.u)}", valve.station);
+            Assert.IsNotNull(s.Blocker(mop), "isolate the loop before mopping");
+            s.Complete(valve);
+            Assert.IsNull(s.Blocker(mop));
+            s.Complete(mop);
+            Assert.AreEqual(TicketStatus.Done, leak.status);
+
+            var smoke = s.TriggerEmergency("vesda");
+            var psu = smoke.tasks.First(x => x.kind == TaskKind.SwapPsu);
+            var reset = smoke.tasks.First(x => x.kind == TaskKind.ResetAlarm);
+            Assert.IsNotNull(s.Blocker(reset));
+            s.inv.pouch.Add(PartKind.Psu);
+            s.Complete(psu);
+            Assert.IsNull(s.Blocker(reset));
         }
     }
 }

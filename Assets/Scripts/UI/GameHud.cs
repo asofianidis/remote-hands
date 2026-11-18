@@ -5,8 +5,26 @@ namespace RH
 {
     public partial class Game
     {
-        /// <summary>Tablet page: 0 tickets, 1 customers, 2 career.</summary>
+        /// <summary>Tablet page: 0 tickets, 1 customers, 2 career, 3 stock, 4 record.</summary>
         public int tabletTab;
+
+        static string Where(Ticket t) => t.rack ?? "Facility";
+        static string Who(Ticket t) => t.customer ?? "Site";
+
+        static string StationName(string id) => id switch
+        {
+            "bench" => "bench",
+            "dock" => "dock",
+            "mmr" => "meet-me room",
+            "kiosk" => "kiosk",
+            "plant" => "plant wall",
+            "receiving" => "receiving",
+            "leak" => "cold aisle",
+            "crac1" => "CRAC-1",
+            "crac2" => "CRAC-2",
+            _ when id != null && id.StartsWith("aisle") => "cold aisle",
+            _ => id,
+        };
 
         void OnGUI()
         {
@@ -37,7 +55,12 @@ namespace RH
                 // Drawn onto the crash cart's monitor in the world.
                 if (MonitorCanvas(out var m)) { Ui.PushCanvas(m); minigame.Draw(); Ui.PopCanvas(); }
             }
-            else if (minigame.InWorld) minigame.Draw();
+            else if (minigame.InWorld)
+            {
+                // The hot aisle is dim: without a head torch the rear of the rack is hard to read.
+                if (minigame.InHotAisle && !career.Has("flashlight")) Ui.Box(new Rect(0, 0, Ui.W, Ui.H), new Color(0.0f, 0.0f, 0.01f, 0.38f));
+                minigame.Draw();
+            }
             else { Ui.Shade(0.75f); minigame.Draw(); }
         }
 
@@ -105,8 +128,17 @@ namespace RH
                 4 => "New today: decommissioning. Old gear comes out, gets wiped at the bench and ships from the dock.",
                 _ => "The site keeps growing, and so does the work order.",
             };
+            if (career.day == 5) news = "New today: switch outages that take a whole rack down, disk shelf work, and optional maintenance jobs on your tablet.";
+            if (career.day == 6) news = "New today: cooling problems (blanking panels, floor tiles, CRAC filters) and cable audits.";
+            if (career.day == 3) news += " Receiving checks at the dock, too.";
+            if (career.day == 4) news += " Customer visitors need escorting.";
             if (shift.news != null) news += "\n\n" + shift.news;
-            Ui.Label(new Rect(r.x + 520, r.y + 165, 470, 220), "<b>Dispatch notes</b>\n" + news, 19, Ui.Dim);
+            var low = Catalog.Parts.Where(p => career.Stock(p) <= 1 && career.Ordered(p) == 0).Select(Catalog.PartName).ToList();
+            if (low.Count > 0) news += $"\n\nLow on spares: {string.Join(", ", low)}. Order from the STOCK page.";
+            if (shift.offers.Count > 0) news += $"\n\n{shift.offers.Count} optional maintenance job{(shift.offers.Count > 1 ? "s are" : " is")} on offer on your tablet.";
+            Ui.Label(new Rect(r.x + 520, r.y + 165, 470, 230), "<b>Dispatch notes</b>\n" + news, 17, Ui.Dim);
+            if (career.goals.Count > 0)
+                Ui.Label(new Rect(r.x + 52, r.y + 305, 440, 90), $"<b>This week</b> (day {career.day - career.weekStart + 1} of 7): " + string.Join("; ", career.goals.Select(g => Catalog.GoalText(g.id, g.target))), 15, Ui.Accent);
             Ui.Label(new Rect(r.x + 52, r.y + 400, 940, 280),
                 "<b>How it works</b>\n" +
                 $"- Today's tickets are on your tablet [{K(Keys.Action.Tablet)}]. Each one names a rack and the hands-on jobs to do there.\n" +
@@ -142,6 +174,7 @@ namespace RH
         {
             if (shift == null) return;
             if (full && cameraUp) { DrawViewfinder(); return; }
+            DrawStatus();
             // Work-order progress (there is no clock: the shift ends when the player clocks out)
             var tl = new Rect(20, 20, 330, 110);
             Ui.Panel(tl);
@@ -169,7 +202,7 @@ namespace RH
                 if (t.id == trackedTicket) Ui.Border(r, Ui.Accent, 2f);
                 Ui.Label(new Rect(r.x + 16, r.y + 6, 40, 24), t.PriorityLabel, 16, PriColor(t.priority), TextAnchor.UpperLeft, true);
                 Ui.Label(new Rect(r.x + 52, r.y + 6, 300, 24), $"#{t.id}  {t.TypeLabel}  {t.rack}", 16, Ui.Text, TextAnchor.UpperLeft, true, false);
-                Ui.Label(new Rect(r.x + 16, r.y + 32, 300, 24), $"{t.DoneCount}/{t.tasks.Count} tasks", 15, Ui.Dim);
+                Ui.Label(new Rect(r.x + 16, r.y + 32, 300, 24), t.trainee ? "trainee on it" : $"{t.DoneCount}/{t.tasks.Count} tasks", 15, Ui.Dim);
                 Ui.Bar(new Rect(r.x + 290, r.y + 26, 112, 10), t.DoneCount / (float)t.tasks.Count, Ui.Accent);
                 y += 70;
             }
@@ -202,6 +235,36 @@ namespace RH
                 15, Ui.Dim, TextAnchor.MiddleRight);
         }
 
+        /// <summary>Top-centre status: the UPS clock during a power failure, the visitor, the trainee.</summary>
+        void DrawStatus()
+        {
+            float y = TutorialOn ? 160 : 20;
+            if (shift.ups > 0)
+            {
+                var r = new Rect(Ui.W / 2 - 330, y, 660, 76);
+                bool flash = Mathf.Repeat(Time.time, 1f) < 0.5f;
+                Ui.Box(r, new Color(flash ? 0.45f : 0.3f, 0.04f, 0.03f, 0.92f));
+                Ui.Border(r, Ui.Bad, 2f);
+                Ui.Label(new Rect(r.x, r.y + 6, r.width, 36), $"ON UPS BATTERY  {Mathf.FloorToInt(shift.ups / 60)}:{Mathf.FloorToInt(shift.ups % 60):00}", 30, Color.white, TextAnchor.UpperCenter, true);
+                Ui.Label(new Rect(r.x, r.y + 44, r.width, 26), "Start the generator at the plant wall by the entrance", 17, new Color(1f, 0.8f, 0.75f), TextAnchor.UpperCenter);
+                y += 86;
+            }
+            foreach (var s in new[] { VisitorStatus(), TraineeStatus() })
+            {
+                if (s == null) continue;
+                var r = new Rect(Ui.W / 2 - 330, y, 660, 38);
+                Ui.Box(r, new Color(0.05f, 0.07f, 0.09f, 0.85f));
+                Ui.Label(r, s, 17, Ui.Warn, TextAnchor.MiddleCenter, true, false);
+                y += 44;
+            }
+        }
+
+        string TraineeStatus()
+        {
+            var t = shift.TraineeTicket;
+            return t == null ? null : $"Trainee on #{t.id} ({t.TypeLabel}, {Where(t)}): about {Mathf.Max(0, t.traineeTime):0}s left";
+        }
+
         void DrawViewfinder()
         {
             float w = Ui.W, h = Ui.H;
@@ -231,9 +294,10 @@ namespace RH
             Ui.Label(new Rect(r.x + 16, r.y + 8, 260, 22), $"HANDS {inv.hands.Count}/{inv.handCap}", 14, Ui.Dim, TextAnchor.UpperLeft, true);
             string hands = inv.hands.Count == 0 ? "empty" : string.Join("\n", inv.hands.Select(h => h.tag != null ? $"{h.Def.name} ({h.tag})" : h.Def.name));
             Ui.Label(new Rect(r.x + 16, r.y + 30, 300, 56), hands, 16, inv.hands.Count > 0 ? Ui.Text : Ui.Dim);
-            Ui.Label(new Rect(r.x + 330, r.y + 8, 220, 22), $"POUCH {inv.pouch.Count}/{inv.pouchCap}", 14, Ui.Dim, TextAnchor.UpperLeft, true);
-            string pouch = inv.pouch.Count == 0 ? "empty" : string.Join(", ", inv.pouch.GroupBy(p => p).Select(g => $"{g.Count()}x {Catalog.PartName(g.Key)}"));
-            Ui.Label(new Rect(r.x + 330, r.y + 30, 220, 56), pouch, 15, inv.pouch.Count > 0 ? Ui.Text : Ui.Dim);
+            Ui.Label(new Rect(r.x + 330, r.y + 8, 220, 22), $"POUCH {inv.pouch.Count + inv.rma.Count}/{inv.pouchCap}", 14, Ui.Dim, TextAnchor.UpperLeft, true);
+            string pouch = inv.pouch.Count == 0 && inv.rma.Count == 0 ? "empty" : string.Join(", ", inv.pouch.GroupBy(p => p).Select(g => $"{g.Count()}x {Catalog.PartName(g.Key)}")) +
+                (inv.rma.Count > 0 ? $"{(inv.pouch.Count > 0 ? ", " : "")}<color=#ffb733>{inv.rma.Count}x RMA</color>" : "");
+            Ui.Label(new Rect(r.x + 330, r.y + 30, 220, 56), pouch, 15, inv.pouch.Count + inv.rma.Count > 0 ? Ui.Text : Ui.Dim);
         }
 
         void DrawWaypoint()
@@ -268,18 +332,20 @@ namespace RH
         {
             var r = Ui.Center(1500, 860);
             Ui.Panel(r);
-            string[] tabs = { "TICKETS", "CUSTOMERS", "CAREER" };
+            string[] tabs = { "TICKETS", "CUSTOMERS", "CAREER", "STOCK", "RECORD" };
             for (int i = 0; i < tabs.Length; i++)
             {
-                var tr = new Rect(r.x + 30 + i * 190, r.y + 18, 180, 44);
+                var tr = new Rect(r.x + 30 + i * 168, r.y + 18, 160, 44);
                 bool on = tabletTab == i;
                 Ui.Box(tr, on ? new Color(0.15f, 0.25f, 0.35f, 0.95f) : Ui.Hover(tr) ? new Color(0.12f, 0.16f, 0.2f) : new Color(0.08f, 0.1f, 0.12f));
                 Ui.Label(tr, tabs[i], 18, on ? Ui.Text : Ui.Dim, TextAnchor.MiddleCenter, true);
                 if (Event.current.type == EventType.MouseDown && tr.Contains(Event.current.mousePosition)) { tabletTab = i; Event.current.Use(); Audio.Play("click"); }
             }
-            Ui.Label(new Rect(r.xMax - 630, r.y + 24, 600, 30), $"{shift.DoneCount}/{shift.tickets.Count} done   {Ui.Money(career.money)}   Rep {career.rep:0}      [{K(Keys.Action.Tablet)}] close", 18, Ui.Dim, TextAnchor.UpperRight);
+            Ui.Label(new Rect(r.xMax - 560, r.y + 24, 530, 30), $"{shift.DoneCount}/{shift.tickets.Count} done   {Ui.Money(career.money)}   Rep {career.rep:0}     [{K(Keys.Action.Tablet)}] close", 17, Ui.Dim, TextAnchor.UpperRight);
             if (tabletTab == 1) DrawCustomers(r);
             else if (tabletTab == 2) DrawCareer(r);
+            else if (tabletTab == 3) DrawStock(r);
+            else if (tabletTab == 4) DrawRecord(r);
             else DrawTickets(r);
         }
 
@@ -295,10 +361,10 @@ namespace RH
                 bool sel = t.id == selectedTicket;
                 Ui.Box(row, sel ? new Color(0.15f, 0.25f, 0.35f, 0.9f) : Ui.Hover(row) ? new Color(0.12f, 0.16f, 0.2f, 0.9f) : new Color(0.08f, 0.1f, 0.12f, 0.9f));
                 Ui.Box(new Rect(row.x, row.y, 5, row.height), Catalog.CustColor(t.customer));
-                string status = t.status == TicketStatus.Done ? "DONE" : $"{t.DoneCount}/{t.tasks.Count}";
+                string status = t.status == TicketStatus.Done ? "DONE" : t.status == TicketStatus.HandedOver ? "FAILED" : t.trainee ? "TRAINEE" : $"{t.DoneCount}/{t.tasks.Count}";
                 Ui.Label(new Rect(row.x + 16, row.y + 6, 40, 26), t.PriorityLabel, 17, t.Open ? PriColor(t.priority) : Ui.Dim, TextAnchor.UpperLeft, true);
                 Ui.Label(new Rect(row.x + 56, row.y + 6, 340, 26), $"#{t.id}  {t.TypeLabel}", 17, t.Open ? Ui.Text : Ui.Dim, TextAnchor.UpperLeft, true, false);
-                Ui.Label(new Rect(row.x + 16, row.y + 34, 380, 24), $"{t.rack}  {t.customer}", 15, Ui.Dim, TextAnchor.UpperLeft, false, false);
+                Ui.Label(new Rect(row.x + 16, row.y + 34, 380, 24), $"{Where(t)}  {Who(t)}", 15, Ui.Dim, TextAnchor.UpperLeft, false, false);
                 Ui.Label(new Rect(row.xMax - 130, row.y + 6, 118, 50), status, 19, t.status == TicketStatus.Done ? Ui.Good : Ui.Text, TextAnchor.MiddleRight, true);
                 if (Event.current.type == EventType.MouseDown && row.Contains(Event.current.mousePosition)) { selectedTicket = t.id; Event.current.Use(); Audio.Play("click"); }
                 y += 70;
@@ -306,15 +372,17 @@ namespace RH
             if (list.Count > 9) Ui.Label(new Rect(lr.x + 12, lr.yMax - 26, lr.width - 24, 22), $"+{list.Count - 9} more below the fold (finish some to see them)", 14, Ui.Dim);
             DrawClockOut(new Rect(r.x + 20, r.yMax - 100, 520, 80));
 
-            var sel2 = shift.tickets.Find(t => t.id == selectedTicket);
+            var sel2 = shift.tickets.Find(t => t.id == selectedTicket) ?? shift.offers.Find(t => t.id == selectedTicket);
             var dr = new Rect(r.x + 560, r.y + 80, r.width - 580, r.height - 100);
+            DrawOffers(new Rect(dr.x + 320, dr.yMax - 64, dr.width - 320, 56));
             if (sel2 == null) return;
+            bool offer = shift.offers.Contains(sel2);
             Ui.Label(new Rect(dr.x, dr.y, dr.width, 60), sel2.title, 25, Ui.Text, TextAnchor.UpperLeft, true);
-            float mul = career.PayMul * career.CustMul(sel2.customer);
+            float mul = career.PayMul * career.CustMul(sel2.customer) * (sel2.trainee ? 0.7f : 1f);
             string pays = sel2.followUp ? "Pays nothing (your mistake)" : $"Pays ~{Ui.Money(Mathf.RoundToInt(sel2.pay * mul))}";
-            string bonus = !sel2.Open || sel2.followUp ? "" : (sel2.mistakes == 0 ? "  (+20% if clean)" : "  (clean bonus lost)") + (sel2.priority == 1 ? sel2.neglected ? "  (rush bonus lost)" : "  (+25% if closed first)" : "");
+            string bonus = !sel2.Open || sel2.followUp || sel2.trainee ? "" : (sel2.mistakes == 0 ? "  (+20% if clean)" : "  (clean bonus lost)") + (sel2.priority == 1 ? sel2.neglected ? "  (rush bonus lost)" : "  (+25% if closed first)" : "");
             Ui.Label(new Rect(dr.x, dr.y + 66, dr.width, 26),
-                $"{sel2.PriorityLabel} {sel2.TypeLabel}   |   Rack {sel2.rack}   |   {sel2.customer}   |   {pays}{bonus}", 17, Ui.Accent);
+                $"{sel2.PriorityLabel} {sel2.TypeLabel}   |   {(sel2.rack != null ? "Rack " + sel2.rack : "Facility")}   |   {Who(sel2)}   |   {pays}{bonus}" + (offer ? "   |   OPTIONAL" : ""), 17, Ui.Accent);
             float bh = Ui.TextHeight(sel2.body, dr.width, 19);
             Ui.Label(new Rect(dr.x, dr.y + 106, dr.width, bh), sel2.body, 19, Ui.Text);
             float ty = dr.y + 126 + bh;
@@ -322,17 +390,46 @@ namespace RH
             ty += 30;
             foreach (var task in sel2.tasks)
             {
-                string b = task.done ? null : shift.Blocker(task);
-                string where = task.station == "bench" ? "  [bench]" : task.station == "dock" ? "  [dock]" : task.station == "mmr" ? "  [meet-me room]" : task.kind == TaskKind.Photo ? "  [camera]" : Shift.RearJob(task.kind) ? "  [rear]" : "";
+                string b = task.done || offer ? null : shift.Blocker(task);
+                string where = task.station != null ? $"  [{StationName(task.station)}]" : task.kind == TaskKind.Photo ? "  [camera]" : Shift.RearJob(task.kind) ? "  [rear]" : "";
                 Ui.Label(new Rect(dr.x, ty, 30, 26), task.done ? "[x]" : "[ ]", 18, task.done ? Ui.Good : Ui.Text, TextAnchor.UpperLeft, true);
                 Ui.Label(new Rect(dr.x + 40, ty, 520, 26), Shift.Describe(task) + $"<color=#8fa3b0>{where}</color>", 18, task.done ? Ui.Dim : Ui.Text, TextAnchor.UpperLeft, false, false);
                 if (b != null) Ui.Label(new Rect(dr.x + 570, ty, dr.width - 570, 26), b, 16, Ui.Warn, TextAnchor.UpperLeft, false, false);
                 ty += 32;
             }
-            if (sel2.Open)
+            if (offer)
+            {
+                if (Ui.Button(new Rect(dr.x, dr.yMax - 64, 300, 56), "Accept this job", true, 20, Ui.Good)) { shift.AcceptOffer(sel2); trackedTicket = sel2.id; }
+                return;
+            }
+            if (sel2.Open && !sel2.trainee)
             {
                 bool tracked = trackedTicket == sel2.id;
                 if (Ui.Button(new Rect(dr.x, dr.yMax - 64, 300, 56), tracked ? "Tracking (waypoint on)" : "Track with waypoint", !tracked, 20)) trackedTicket = sel2.id;
+                if (shift.HasTrainee)
+                {
+                    string why = shift.TraineeBlocker(sel2);
+                    if (Ui.Button(new Rect(dr.x, dr.yMax - 128, 300, 56), "Hand to trainee", why == null, 20, Ui.Warn) && shift.AssignTrainee(sel2))
+                    {
+                        if (trackedTicket == sel2.id) trackedTicket = shift.OpenTickets.Where(x => !x.trainee).OrderBy(x => x.priority).FirstOrDefault()?.id ?? 0;
+                        facility.RefreshAll(shift);
+                    }
+                    if (why != null) Ui.Label(new Rect(dr.x + 310, dr.yMax - 128, 600, 56), why, 16, Ui.Dim, TextAnchor.MiddleLeft);
+                }
+            }
+        }
+
+        /// <summary>Optional preventive-maintenance offers: take them on, or let them lapse at clock-out.</summary>
+        void DrawOffers(Rect r)
+        {
+            for (int i = 0; i < shift.offers.Count; i++)
+            {
+                var o = shift.offers[i];
+                var row = new Rect(r.x, r.y - i * (r.height + 6), r.width, r.height);
+                Ui.Box(row, new Color(0.1f, 0.14f, 0.1f, 0.92f));
+                Ui.Label(new Rect(row.x + 14, row.y, row.width - 170, row.height), $"<b>OPTIONAL</b>  {o.title}", 15, Ui.Text, TextAnchor.MiddleLeft, false, false);
+                if (Ui.Button(new Rect(row.xMax - 150, row.y + 8, 70, row.height - 16), "View", true, 15)) selectedTicket = o.id;
+                if (Ui.Button(new Rect(row.xMax - 74, row.y + 8, 68, row.height - 16), "Take", true, 15, Ui.Good)) { shift.AcceptOffer(o); selectedTicket = o.id; break; }
             }
         }
 
@@ -350,11 +447,12 @@ namespace RH
                 int racks = shift.racks.Count(x => x.owner == c.name);
                 int units = shift.racks.Where(x => x.owner == c.name).Sum(x => x.devices.Count);
                 Ui.Label(new Rect(row.x + 22, row.y + 10, 400, 30), c.name, 22, Ui.Text, TextAnchor.UpperLeft, true);
-                Ui.Label(new Rect(row.x + 22, row.y + 42, 400, 24), $"{racks} rack{(racks == 1 ? "" : "s")}, {units} units", 16, Ui.Dim);
+                Ui.Label(new Rect(row.x + 22, row.y + 42, 380, 24), $"{racks} rack{(racks == 1 ? "" : "s")}, {units} units   <color=#ffb733>{Catalog.TraitName(c.trait)}</color>", 16, Ui.Dim, TextAnchor.UpperLeft, false, false);
+                Ui.Label(new Rect(row.x + 22, row.y + 86, row.width - 44, 18), Catalog.TraitDesc(c.trait), 13, Ui.Dim, TextAnchor.UpperLeft, false, false);
                 string mood = sat >= 80 ? "Delighted" : sat >= 60 ? "Happy" : sat >= 40 ? "Neutral" : sat >= 20 ? "Unhappy" : "Furious";
                 Color mc = sat >= 60 ? Ui.Good : sat >= 40 ? Ui.Text : sat >= 20 ? Ui.Warn : Ui.Bad;
                 Ui.Label(new Rect(row.xMax - 300, row.y + 10, 280, 30), $"{mood}  ({sat:0})", 20, mc, TextAnchor.UpperRight, true);
-                Ui.Bar(new Rect(row.x + 22, row.y + 74, row.width - 44, 12), sat / 100f, mc);
+                Ui.Bar(new Rect(row.x + 22, row.y + 70, row.width - 44, 10), sat / 100f, mc);
                 Ui.Label(new Rect(row.xMax - 300, row.y + 42, 280, 24), $"pay x{career.CustMul(c.name):0.00}", 16, Ui.Dim, TextAnchor.UpperRight);
             }
         }
@@ -372,10 +470,24 @@ namespace RH
                 Ui.Label(new Rect(a.x, a.y + 122, 600, 24), $"{next - career.xp} XP to {Catalog.LevelTitles[career.Level]}", 17, Ui.Dim);
             }
             else Ui.Label(new Rect(a.x, a.y + 100, 600, 24), "Top of the ladder.", 17, Ui.Good);
-            Ui.Label(new Rect(a.x, a.y + 170, 680, 300),
-                "<b>How you earn XP</b>\n- 10 per ticket, +5 if it's clean, +5 for a P1 closed first\n- +5 more for build-outs and decommissions\n\n" +
-                "<b>What levels give you</b>\n- +4% pay per level\n- Better tools and certifications in the tech shop\n\n" +
-                $"<b>Pay rate now</b>: x{career.PayMul:0.00} (reputation and level)", 18, Ui.Text);
+            Ui.Label(new Rect(a.x, a.y + 160, 680, 250),
+                "<b>How you earn XP</b>\n- 10 per ticket, +5 if it's clean, +5 for a P1 closed first\n- +5 more for build-outs, decommissions and emergencies\n\n" +
+                $"<b>What levels give you</b>\n- +4% pay per level, better gear in the tech shop\n- {Catalog.LevelTitles[Catalog.ExpansionLevel - 1]}: the expansion cages open. {Catalog.LevelTitles[Catalog.TraineeLevel - 1]}: a trainee\n\n" +
+                $"<b>Pay rate now</b>: x{career.PayMul:0.00} (reputation and level)", 17, Ui.Text);
+            // This week's review.
+            var wk = new Rect(a.x, a.y + 420, 690, 220);
+            Ui.Panel(wk, Ui.Bg2);
+            int dayOfWeek = career.day - career.weekStart + 1;
+            Ui.Label(new Rect(wk.x + 16, wk.y + 10, 660, 24), $"WEEKLY REVIEW   day {Mathf.Clamp(dayOfWeek, 1, 7)} of 7", 16, Ui.Accent, TextAnchor.UpperLeft, true);
+            float gy = wk.y + 42;
+            foreach (var g in career.goals)
+            {
+                string prog = Catalog.GoalIsStreak(g.id) ? (g.broken ? "missed" : "on track") : $"{Mathf.Min(g.progress, g.target)}/{g.target}";
+                Ui.Label(new Rect(wk.x + 16, gy, 520, 26), (g.Met ? "[x] " : "[ ] ") + Catalog.GoalText(g.id, g.target), 17, g.Met ? Ui.Good : Ui.Text, TextAnchor.UpperLeft, false, false);
+                Ui.Label(new Rect(wk.xMax - 150, gy, 134, 26), prog, 17, g.broken ? Ui.Bad : g.Met ? Ui.Good : Ui.Dim, TextAnchor.UpperRight, true);
+                gy += 34;
+            }
+            Ui.Label(new Rect(wk.x + 16, wk.yMax - 64, 660, 50), $"Each goal met: +{Ui.Money(Catalog.GoalCash)} and +{Catalog.GoalXp} XP. All of them: +{Ui.Money(Catalog.PerfectWeekCash)} more. Reviewed at the end of the 7th shift.", 15, Ui.Dim);
             var b = new Rect(r.x + 780, r.y + 90, 690, 640);
             Ui.Label(new Rect(b.x, b.y, 600, 30), "CERTIFICATIONS AND TOOLS", 18, Ui.Dim, TextAnchor.UpperLeft, true);
             float y = b.y + 40;
@@ -386,6 +498,83 @@ namespace RH
             }
             if (!career.upgrades.Any()) Ui.Label(new Rect(b.x, y, 680, 30), "Nothing yet. The tech shop opens after every shift.", 18, Ui.Dim);
             Ui.Label(new Rect(b.x, b.yMax - 90, 680, 80), $"Career: {career.ticketsDone} tickets closed, {career.handedOver} handed to the night shift, {Ui.Money(career.totalEarned)} earned.", 17, Ui.Dim);
+        }
+
+        /// <summary>Spare parts on the shelves, on order, and the order desk.</summary>
+        void DrawStock(Rect r)
+        {
+            Ui.Label(new Rect(r.x + 30, r.y + 80, 1400, 52),
+                "Spare parts are limited. Order more here: they arrive on a pallet at the receiving bay next morning, as a receiving ticket. " +
+                $"Failed parts you pull go into RMA bags: drop them in the returns bin in the storage room for {Catalog.RmaCredit * 100:0}% of the part's price back.", 17, Ui.Dim);
+            Ui.Label(new Rect(r.x + 30, r.y + 150, 1400, 24), "PART                                   ON THE SHELF         ON ORDER          PRICE", 15, Ui.Dim, TextAnchor.UpperLeft, true);
+            float y = r.y + 184;
+            foreach (var p in Catalog.Parts)
+            {
+                var row = new Rect(r.x + 30, y, r.width - 60, 70);
+                Ui.Panel(row, Ui.Bg2);
+                int n = career.Stock(p), o = career.Ordered(p);
+                Ui.Label(new Rect(row.x + 18, row.y, 360, row.height), Catalog.PartName(p), 21, Ui.Text, TextAnchor.MiddleLeft, true);
+                Ui.Label(new Rect(row.x + 360, row.y, 180, row.height), n.ToString(), 24, n == 0 ? Ui.Bad : n <= 1 ? Ui.Warn : Ui.Good, TextAnchor.MiddleLeft, true);
+                Ui.Label(new Rect(row.x + 560, row.y, 160, row.height), o > 0 ? $"+{o}" : "-", 21, o > 0 ? Ui.Accent : Ui.Dim, TextAnchor.MiddleLeft, true);
+                Ui.Label(new Rect(row.x + 720, row.y, 140, row.height), Ui.Money(Catalog.PartPrice(p)), 20, Ui.Text, TextAnchor.MiddleLeft);
+                foreach (var (k, i) in new[] { (1, 0), (5, 1) })
+                {
+                    int cost = Catalog.PartPrice(p) * k;
+                    if (Ui.Button(new Rect(row.xMax - 380 + i * 190, row.y + 10, 176, row.height - 20), $"Order {k}  ({Ui.Money(cost)})", career.money >= cost, 17))
+                    {
+                        string why = shift.Order(p, k);
+                        Toast(why ?? $"Ordered {k}x {Catalog.PartName(p)}. It arrives at the receiving bay tomorrow morning.", why == null ? 1 : 2);
+                    }
+                }
+                y += 80;
+            }
+            var inv = shift.inv;
+            Ui.Label(new Rect(r.x + 30, y + 16, 1400, 60),
+                $"In your pouch: {inv.pouch.Count} spare{(inv.pouch.Count == 1 ? "" : "s")}, {inv.rma.Count} failed part{(inv.rma.Count == 1 ? "" : "s")} waiting for the returns bin." +
+                (shift.rmaCredit > 0 ? $"   RMA credit today: {Ui.Money(shift.rmaCredit)}." : ""), 18, inv.rma.Count > 0 ? Ui.Warn : Ui.Text);
+        }
+
+        /// <summary>Lifetime numbers and achievements.</summary>
+        void DrawRecord(Rect r)
+        {
+            var s = career.stats;
+            var a = new Rect(r.x + 30, r.y + 90, 560, 700);
+            Ui.Label(new Rect(a.x, a.y, a.width, 30), "CAREER RECORD", 18, Ui.Dim, TextAnchor.UpperLeft, true);
+            var rows = new (string, string)[]
+            {
+                ("Days worked", (career.day - 1).ToString()),
+                ("Tickets closed", career.ticketsDone.ToString()),
+                ("Handed to the night shift", career.handedOver.ToString()),
+                ("Total earned", Ui.Money(career.totalEarned)),
+                ("Best shift", Ui.Money(career.bestDay)),
+                ("Clean streak (best)", $"{s.streak} ({s.bestStreak})"),
+                ("P1s closed first", s.p1First.ToString()),
+                ("Parts hot-swapped", s.partsSwapped.ToString()),
+                ("Drives shredded", s.drivesShredded.ToString()),
+                ("Racks built out", s.racksBuilt.ToString()),
+                ("Racks tidied", s.racksTidied.ToString()),
+                ("Visitors escorted", s.visitors.ToString()),
+                ("Emergencies handled", s.emergencies.ToString()),
+                ("Failing parts caught early", s.caughtEarly.ToString()),
+                ("Parts returned under RMA", s.rmaReturned.ToString()),
+                ("Perfect weeks", s.perfectWeeks.ToString()),
+            };
+            for (int i = 0; i < rows.Length; i++)
+            {
+                Ui.Label(new Rect(a.x, a.y + 40 + i * 38, 380, 34), rows[i].Item1, 18, Ui.Text);
+                Ui.Label(new Rect(a.x + 380, a.y + 40 + i * 38, 170, 34), rows[i].Item2, 18, Ui.Accent, TextAnchor.UpperRight, true);
+            }
+            var b = new Rect(r.x + 640, r.y + 90, r.width - 670, 720);
+            Ui.Label(new Rect(b.x, b.y, b.width, 30), $"ACHIEVEMENTS  {career.achievements.Count}/{Catalog.Achievements.Length}", 18, Ui.Dim, TextAnchor.UpperLeft, true);
+            for (int i = 0; i < Catalog.Achievements.Length; i++)
+            {
+                var ach = Catalog.Achievements[i];
+                bool got = career.achievements.Contains(ach.id);
+                var c = new Rect(b.x + (i % 2) * (b.width / 2f), b.y + 40 + (i / 2) * 96, b.width / 2f - 12, 86);
+                Ui.Panel(c, got ? new Color(0.1f, 0.2f, 0.12f, 0.95f) : Ui.Bg2);
+                Ui.Label(new Rect(c.x + 14, c.y + 10, c.width - 28, 26), ach.name, 18, got ? Ui.Good : Ui.Dim, TextAnchor.UpperLeft, true, false);
+                Ui.Label(new Rect(c.x + 14, c.y + 40, c.width - 28, 40), ach.desc, 15, got ? Ui.Text : Ui.Dim);
+            }
         }
 
         /// <summary>Ending the shift is the player's call. Open work needs a second click to confirm.</summary>
@@ -413,7 +602,9 @@ namespace RH
             Ui.Panel(r);
             Ui.Label(new Rect(r.x + 30, r.y + 20, 800, 44), $"RACK {rack.label}", 30, Ui.Text, TextAnchor.UpperLeft, true);
             Ui.Label(new Rect(r.x + 230, r.y + 28, 160, 30), rearSide ? "REAR" : "FRONT", 20, rearSide ? new Color(1f, 0.6f, 0.4f) : Ui.Accent, TextAnchor.UpperLeft, true);
-            Ui.Label(new Rect(r.x + 340, r.y + 28, 600, 30), rack.owner ?? "vacant", 20, rack.owner != null ? Catalog.CustColor(rack.owner) : Ui.Dim, TextAnchor.UpperLeft, true);
+            Ui.Label(new Rect(r.x + 340, r.y + 28, 600, 30), (rack.owner ?? "vacant") +
+                (rack.hot ? $"   <color=#ff7a40>INLET {30 + rack.openGaps.Count}°C</color>" : "") + (rack.tidy ? "   <color=#8fa3b0>tidy</color>" : ""), 20, rack.owner != null ? Catalog.CustColor(rack.owner) : Ui.Dim, TextAnchor.UpperLeft, true);
+            bool isolated = Shift.Isolated(rack);
             Ui.Label(new Rect(r.xMax - 530, r.y + 26, 500, 30), $"[{K(Keys.Action.Interact)}] / [Esc] step back", 18, Ui.Dim, TextAnchor.UpperRight);
 
             // Elevation
@@ -426,13 +617,19 @@ namespace RH
                 float yy = el.yMax - 4 - u * uh;
                 Ui.Label(new Rect(el.x + 4, yy, 36, uh), u.ToString(), 12, new Color(0.45f, 0.5f, 0.55f), TextAnchor.MiddleRight);
             }
+            foreach (int g in rack.openGaps)
+            {
+                float yy = el.yMax - 4 - g * uh;
+                Ui.Label(new Rect(el.x + 48, yy, el.width - 56, uh), "open gap (no blanking panel)", 11, new Color(1f, 0.5f, 0.3f, 0.8f), TextAnchor.MiddleCenter, false, false);
+            }
             foreach (var d in rack.devices)
             {
                 float yy = el.yMax - 4 - (d.Top) * uh;
                 var dr = new Rect(el.x + 48, yy + 1, el.width - 56, d.Def.heightU * uh - 2);
                 Ui.Box(dr, d.Def.color * 1.7f);
                 Ui.Box(new Rect(dr.x, dr.y, 6, dr.height), Catalog.CustColor(d.owner));
-                string flag = d.fault == Fault.NoPower ? "  NO POWER" : d.fault == Fault.ArrayCritical ? "  ARRAY CRITICAL" : d.failedBay >= 0 ? "  DRIVE FAULT" : d.failedPsu >= 0 ? "  PSU FAULT" : d.fault != Fault.None ? "  UNREACHABLE" : "";
+                string flag = d.fault == Fault.NoPower ? "  NO POWER" : d.fault == Fault.ArrayCritical ? "  ARRAY CRITICAL" : d.failedBay >= 0 ? "  DRIVE FAULT" : d.failedPsu >= 0 ? "  PSU FAULT" :
+                    d.fault != Fault.None ? (d.Def.kind == DevKind.Switch ? "  SWITCH DOWN" : "  UNREACHABLE") : isolated ? "  NO UPLINK" : "";
                 Ui.Label(new Rect(dr.x + 14, dr.y, dr.width - 20, dr.height), $"{d.Def.name}  #{d.id}<color=#ff7a5c><b>{flag}</b></color>", 13, Ui.Text, TextAnchor.MiddleLeft, false, false);
                 if (tasks.Any(x => !x.task.done && x.task.deviceId == d.id)) Ui.Border(dr, Ui.Warn, 2f);
             }
@@ -456,12 +653,24 @@ namespace RH
 
         void DrawStation()
         {
-            string title = currentStation switch { "bench" => "WIPE & SHRED STATION", "dock" => "OUTBOUND PALLET", _ => "MEET-ME ROOM" };
+            string title = currentStation switch
+            {
+                "bench" => "WIPE & SHRED STATION",
+                "dock" => "OUTBOUND PALLET",
+                "mmr" => "MEET-ME ROOM",
+                _ => (currentStationTitle ?? currentStation).ToUpperInvariant(),
+            };
             string about = currentStation switch
             {
                 "bench" => "Decommissioned units get their drives pulled, logged and shredded here before they leave the building. Bring the unit with you.",
                 "dock" => "Wiped, decommissioned units wait here for the freight company. Bring the unit with you.",
-                _ => "Every carrier's panel and every customer cage's uplinks meet on this frame. Cross-connects are patched here.",
+                "mmr" => "Every carrier's panel and every customer cage's uplinks meet on this frame. Cross-connects are patched here.",
+                "kiosk" => "Visitors sign in here. Check their ID against the customer's access list before anyone gets a badge.",
+                "plant" => "Generator 1's controller and the fire alarm panel. Utility failures and smoke alarms are handled from here.",
+                "receiving" => "Inbound spares are checked against the packing list here before they go on the storage room shelves.",
+                "leak" => "Water on the data hall floor. Isolate the leaking loop first, then clean it up.",
+                _ when currentStation.StartsWith("crac") => "A computer-room air conditioner and its chilled-water manifold. Filters, valves and alarms live here.",
+                _ => "The perforated tiles here feed cold air from under the raised floor to the racks' intakes.",
             };
             var r = Ui.Center(1100, 760);
             Ui.Panel(r);
@@ -495,7 +704,7 @@ namespace RH
                     string b = shift.Blocker(task) ?? SideBlocker(task);
                     if (b == null && task.kind == TaskKind.Photo) b = $"Use the camera [{K(Keys.Action.Camera)}]";
                     if (b != null) Ui.Label(new Rect(row.x + 460, row.y, row.width - 480, 50), b, 15, Ui.Warn, TextAnchor.MiddleRight);
-                    else if (Ui.Button(new Rect(row.xMax - 170, row.y + 6, 160, 38), task.kind == TaskKind.Ship ? "Load" : "Start", true, 19, Ui.Good)) StartTask(task);
+                    else if (Ui.Button(new Rect(row.xMax - 170, row.y + 6, 160, 38), task.kind == TaskKind.Ship ? "Load" : task.kind == TaskKind.Mop ? "Mop up" : task.kind == TaskKind.ResetAlarm ? "Reset" : "Start", true, 19, Ui.Good)) StartTask(task);
                 }
                 y += 56;
             }
@@ -508,15 +717,25 @@ namespace RH
             Ui.Label(new Rect(ir.x + 16, ir.y + 12, 400, 24), "CARRYING", 15, Ui.Dim, TextAnchor.UpperLeft, true);
             Ui.Label(new Rect(ir.x + 16, ir.y + 40, ir.width - 32, 120),
                 (inv.hands.Count == 0 ? "Hands: empty" : "Hands: " + string.Join(", ", inv.hands.Select(h => h.tag != null ? $"{h.Def.name} ({h.tag})" : h.Def.name))) + "\n" +
-                (inv.pouch.Count == 0 ? "Pouch: empty" : "Pouch: " + string.Join(", ", inv.pouch.Select(Catalog.PartName))), 18, Ui.Text);
+                (inv.pouch.Count == 0 ? "Pouch: empty" : "Pouch: " + string.Join(", ", inv.pouch.Select(Catalog.PartName))) +
+                (inv.rma.Count > 0 ? $"\nRMA bags: {inv.rma.Count} failed part{(inv.rma.Count > 1 ? "s" : "")} for the returns bin" : ""), 18, Ui.Text);
         }
 
         // ================================================================ end of shift
         void DrawSummary()
         {
             Ui.Box(new Rect(0, 0, Ui.W, Ui.H), new Color(0, 0, 0, 0.7f));
-            var r = Ui.Center(900, 760);
+            var notes = new System.Collections.Generic.List<string>(shift.endNotes);
+            if (shift.rmaCredit > 0) notes.Insert(0, $"RMA credit from returned parts: {Ui.Money(shift.rmaCredit)}");
+            foreach (var id in shift.unlocked) notes.Add($"Achievement: <b>{Catalog.Achievements.First(a => a.id == id).name}</b>");
+            var r = Ui.Center(notes.Count == 0 ? 900 : 1320, 760);
             Ui.Panel(r);
+            if (notes.Count > 0)
+            {
+                var nr = new Rect(r.x + 640, r.y + 125, r.width - 690, r.height - 250);
+                Ui.Panel(nr, Ui.Bg2);
+                Ui.Label(new Rect(nr.x + 18, nr.y + 14, nr.width - 36, nr.height - 28), string.Join("\n\n", notes), 18, Ui.Text);
+            }
             Ui.Label(new Rect(r.x + 50, r.y + 40, 800, 60), $"Shift over: Day {career.day - 1}", 44, Ui.Text, TextAnchor.UpperLeft, true);
             float repD = career.rep - shift.repStart;
             int xpD = career.xp - shift.xpStart;
@@ -533,7 +752,7 @@ namespace RH
                 $"Time on the floor:  {Mathf.FloorToInt(shiftSeconds / 60)}m {Mathf.FloorToInt(shiftSeconds % 60):00}s",
                 24, Ui.Text);
             string verdict = shift.handedOver == 0 && shift.mistakes == 0 ? "Spotless. The NOC loves you." : shift.handedOver == 0 ? "Everything closed. Nice work." : shift.handedOver > 2 ? "The night shift is not happy with you." : "Close. Try to finish the whole work order.";
-            Ui.Label(new Rect(r.x + 52, r.y + 575, 800, 40), verdict, 22, Ui.Accent);
+            Ui.Label(new Rect(r.x + 52, r.y + 575, 570, 60), verdict, 22, Ui.Accent);
             if (Ui.Button(new Rect(r.x + 50, r.yMax - 100, 340, 60), "Visit the tech shop", true, 22, Ui.Good)) screen = GameScreen.Shop;
         }
 

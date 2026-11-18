@@ -63,9 +63,24 @@ namespace RH
                 case TaskKind.Power: return new PowerGame();
                 case TaskKind.RaidRebuild: return new RaidGame();
                 case TaskKind.Wipe: return new WipeGame();
+                case TaskKind.ConfigRestore: return new ConfigGame();
+                case TaskKind.HealthCheck: return new HealthCheckGame();
+                case TaskKind.SasPath: return new SasGame();
+                case TaskKind.CableTidy: return new CableTidyGame();
+                case TaskKind.Blanking: return new BlankingGame();
+                case TaskKind.Tiles: return new TilesGame();
+                case TaskKind.CracService: return new CracGame();
+                case TaskKind.Valve: return new ValveGame();
+                case TaskKind.Generator: return new GeneratorGame();
+                case TaskKind.Receive: return new ReceiveGame();
+                case TaskKind.Badge: return new BadgeGame();
                 default: return null;
             }
         }
+
+        /// <summary>A 3D job at the rear of a rack: the hot aisle is dim unless you brought a head torch.</summary>
+        public bool InHotAisle => InWorld && task != null && task.station == null && Shift.RearJob(task.kind);
+        Light torch;
 
         public void Start(Game g, WorkTask t)
         {
@@ -74,6 +89,17 @@ namespace RH
             g.shift.working = g.shift.TicketOf(t);
             Begin();
             if (OnScreen) BuildCrashCart();
+            if (InHotAisle && career.Has("flashlight"))
+            {
+                torch = new GameObject("head torch").AddComponent<Light>();
+                torch.transform.SetParent(Cam.transform, false);
+                torch.type = LightType.Spot;
+                torch.spotAngle = 70f;
+                torch.range = 4f;
+                torch.intensity = 3.5f;
+                torch.color = new Color(1f, 0.97f, 0.9f);
+                torch.shadows = LightShadows.None;
+            }
         }
 
         protected abstract void Begin();
@@ -92,6 +118,8 @@ namespace RH
         {
             if (rig != null) Object.Destroy(rig.gameObject);
             rig = null;
+            if (torch != null) Object.Destroy(torch.gameObject);
+            torch = null;
             if (hidOnRack) game.facility.Hide(shift, task.rack, 0);
             hidOnRack = false;
         }

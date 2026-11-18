@@ -28,7 +28,11 @@ namespace RH
         Vector3 pullDir;
         float pullLen;
         Transform dev;
-        Material ledGreen, ledDim, ledAmber, ledRed, ledOff, partOk;
+        Material ledGreen, ledDim, ledAmber, ledRed, ledOff, ledBlue, partOk;
+        /// <summary>Predictive failure on a disk shelf: the controller lit a blue LOCATE light instead of amber.</summary>
+        bool locate;
+        /// <summary>Only one static zap per job, however unlucky.</summary>
+        bool zapped;
 
         const float Front = -RackView.Depth / 2f + 0.05f;
         const float Back = Front + 0.9f;
@@ -61,6 +65,8 @@ namespace RH
             ledAmber = Mats.Unlit(new Color(1f, 0.6f, 0.05f));
             ledRed = Mats.Unlit(new Color(1f, 0.15f, 0.1f));
             ledOff = Mats.Unlit(new Color(0.06f, 0.06f, 0.06f));
+            ledBlue = Mats.Unlit(new Color(0.25f, 0.5f, 1f));
+            locate = mode == SwapMode.Drive && task.component == "locate";
             MakeRig(RackV.transform);
             // Rear jobs also hide the cords and cable bundle, which would sit right in front of the PSUs and NIC.
             HideOnRack(d.id, mode == SwapMode.Psu || mode == SwapMode.Sfp);
@@ -246,7 +252,8 @@ namespace RH
         {
             hint = step switch
             {
-                0 => mode == SwapMode.Drive ? "Find the failed drive: steady AMBER light. Green flicker is normal activity. Click it." :
+                0 => locate ? $"Find the drive with the blinking BLUE locate light among all {slots}. It hasn't failed yet, so there's no amber. Click it." :
+                     mode == SwapMode.Drive ? "Find the failed drive: steady AMBER light. Green flicker is normal activity. Click it." :
                      mode == SwapMode.Psu ? "Find the failed power supply (red status light) and click it. The other one is keeping the server alive!" :
                      mode == SwapMode.Sfp ? "Find the optic reporting a TX fault (red light) and click it." :
                      mode == SwapMode.Dimm ? "The server is powered down with the lid off. Find the DIMM with the amber fault LED next to it and click it." :
@@ -315,7 +322,11 @@ namespace RH
                     if (Released && spareDrag)
                     {
                         spareDrag = false;
-                        if (SocketRect(bad).Contains(m) || SlotRect(bad).Contains(m)) { step = 4; seat = 0f; latch = 1f; Audio.Play("clunk"); Hint(); }
+                        if (SocketRect(bad).Contains(m) || SlotRect(bad).Contains(m))
+                        {
+                            if (mode == SwapMode.Dimm && !career.Has("esd") && !zapped && rnd.NextDouble() < 0.25) { Zap(); break; }
+                            step = 4; seat = 0f; latch = 1f; Audio.Play("clunk"); Hint();
+                        }
                     }
                     break;
                 case 4:
@@ -337,6 +348,25 @@ namespace RH
             Pose();
         }
 
+        /// <summary>
+        /// No wrist strap: a static discharge kills the fresh DIMM as it goes in. Use the next spare from
+        /// the pouch, or go and fetch another one.
+        /// </summary>
+        void Zap()
+        {
+            zapped = true;
+            Audio.Play("bad");
+            shift.inv.pouch.Remove(PartKind.Dimm);
+            if (shift.inv.HasPart(PartKind.Dimm))
+            {
+                Oops("Static zap! You weren't grounded and the new DIMM is dead. Seat your other spare (an ESD strap from the tech shop stops this)", 1f);
+                return;
+            }
+            Oops("Static zap! You weren't grounded and the new DIMM is dead. Fetch another one from the storage room (an ESD strap from the tech shop stops this)", 1f);
+            finished = true;
+            success = false;
+        }
+
         /// <summary>Move the 3D parts to match the job's state.</summary>
         void Pose()
         {
@@ -355,7 +385,8 @@ namespace RH
                 s.latch.localRotation = Quaternion.Euler(lat * 35f, 0, 0);
                 bool failed = isBad && step < 5 && step != 4;
                 Material led;
-                if (failed || (isBad && step == 4)) led = mode == SwapMode.Drive || mode == SwapMode.Dimm ? ledAmber : ledRed;
+                if (locate && isBad && step < 3) led = blink < 0.5f ? ledBlue : ledOff;
+                else if (failed || (isBad && step == 4)) led = mode == SwapMode.Drive || mode == SwapMode.Dimm ? ledAmber : ledRed;
                 else if (isBad && step == 5) led = blink < 0.5f ? ledGreen : ledAmber;
                 else if (mode == SwapMode.Dimm) led = ledOff;
                 // Drives flicker with I/O; power supplies, optics and fans just show steady green.

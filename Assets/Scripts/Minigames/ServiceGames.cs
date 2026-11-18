@@ -284,7 +284,11 @@ namespace RH
                 slotR = new Rect(slotR.x - 30, slotR.y - 40, slotR.width + 60, slotR.height + 80);
                 if (slotR.Contains(m))
                 {
-                    if (d.st != St.Scanned) Oops($"Drive {d.serial} went into the shredder without being scanned: the chain of custody is broken", 1.5f);
+                    if (d.st != St.Scanned)
+                    {
+                        bool audited = Catalog.TraitOf(shift.TicketOf(task)?.customer) == Trait.Compliance;
+                        Oops($"Drive {d.serial} went into the shredder without being scanned: the chain of custody is broken" + (audited ? ", and the auditors will see it" : ""), audited ? 3f : 1.5f);
+                    }
                     d.st = St.Shredded;
                     shredAnim = 0.6f;
                     Audio.Play("screw");

@@ -207,7 +207,7 @@ DEVICES = {
     # id: (height U, bays, sfps, kind)
     'srv1u': (1, 4, 2, 'server'), 'srv2u': (2, 12, 2, 'server'), 'sw48': (1, 0, 6, 'switch'),
     'ds4u': (4, 24, 0, 'storage'), 'cust1u': (1, 0, 0, 'appliance'), 'cust2u': (2, 8, 0, 'server'),
-    'cust4u': (4, 24, 0, 'storage'),
+    'cust4u': (4, 24, 0, 'storage'), 'gpu4u': (4, 8, 2, 'gpu'), 'tl4u': (4, 0, 0, 'tape'),
 }
 
 
@@ -270,6 +270,17 @@ def unit(name):
         bz.box((0.13, h * 0.5, -0.0072), (0.064, h * 0.34, 0.0006), 'lcd')
         bz.box((-0.225, h * 0.5, -0.0066), (0.022, h * 0.28, 0.0008), 'label')
         bz.cyl((0.205, h * 0.5, -0.007), 0.004, 0.003, 'z', 'trim')
+    elif kind == 'tape':
+        # Two tape magazines with pull handles, an operator LCD and the mail slot.
+        bz.box((0, h / 2, -0.002), (0.48, h * 0.92, 0.004), 'bezel', bevel=0.001)
+        for sx in (-1, 1):
+            bz.box((sx * 0.115, h * 0.45, -0.0055), (0.2, h * 0.66, 0.003), 'body', bevel=0.001)
+            grille(bz, sx * 0.115 - 0.08, sx * 0.115 + 0.08, h * 0.2, h * 0.5, -0.0075, 14, fill=0.4)
+            handle(bz, sx * 0.115, h * 0.62, -0.007, 0.07, 0.008, 0.014)
+            bz.box((sx * 0.115, h * 0.74, -0.0072), (0.11, 0.007, 0.0008), 'label')
+        bz.box((0, h * 0.88, -0.005), (0.07, 0.02, 0.002), 'dark')
+        bz.box((0, h * 0.88, -0.0062), (0.062, 0.014, 0.0006), 'lcd')
+        bz.box((0, h * 0.1, -0.005), (0.08, 0.008, 0.003), 'dark')
     cols = 4 if bays <= 4 else 6 if bays <= 12 else 12
     rows = math.ceil(bays / cols) if bays else 0
     if bays and bays < cols * rows:
@@ -285,7 +296,11 @@ def unit(name):
     zb = 0.9
     rear.box((0, h / 2, zb + 0.002), (0.5, h * 0.86, 0.004), 'body')
     grille(rear, -0.02, 0.05, h * 0.15, h * 0.85, zb + 0.0045, 8)
-    if kind in ('server', 'appliance'):
+    if kind == 'gpu':
+        # Four double-width GPU exhaust grilles across the top of the rear.
+        for i in range(4):
+            grille(rear, -0.23 + i * 0.075, -0.17 + i * 0.075, h * 0.45, h * 0.92, zb + 0.0045, 10, fill=0.5)
+    if kind in ('server', 'appliance', 'gpu'):
         rear.box((-0.06, h * 0.5, zb + 0.005), (0.012, min(0.011, h * 0.4), 0.004), 'dark')  # RJ45 eth
         rear.box((-0.045, h * 0.5, zb + 0.005), (0.012, min(0.011, h * 0.4), 0.004), 'dark')
         rear.box((-0.2, h * 0.5, zb + 0.005), (0.012, min(0.011, h * 0.4), 0.004), 'dark')  # mgmt
@@ -300,6 +315,10 @@ def unit(name):
             rear.cyl((-0.13 + i * 0.045, h * 0.5, zb + 0.0045), h * 0.36, 0.002, 'z', 'dark', segs=14)
             rear.box((-0.13 + i * 0.045, h * 0.5, zb + 0.0058), (h * 0.7, 0.0012, 0.0006), 'trim')
         rear.box((-0.215, h * 0.5, zb + 0.005), (0.012, h * 0.4, 0.004), 'dark')
+    elif kind == 'tape':
+        rear.box((-0.13, h * 0.5, zb + 0.006), (0.2, h * 0.3, 0.008), 'trim', bevel=0.001)
+        rear.box((-0.17, h * 0.5, zb + 0.0105), (0.018, h * 0.12, 0.002), 'dark')
+        rear.box((-0.2, h * 0.3, zb + 0.005), (0.012, min(0.011, h * 0.4), 0.004), 'dark')
     elif kind == 'storage':
         for i in range(2):  # SAS I/O modules
             y = h * (0.3 + i * 0.4)
@@ -800,6 +819,80 @@ def rollup_door():
     p.box((W / 2 + 0.25, 1.3, -0.02), (0.12, 0.2, 0.06), 'yellow', bevel=0.01)  # control box
     p.box((W / 2 + 0.25, 1.33, -0.052), (0.03, 0.03, 0.004), 'lcd')
     p.box((W / 2 + 0.25, 1.27, -0.052), (0.03, 0.03, 0.004), 'red')
+    return md
+
+
+# ============================================================ building plant
+@model
+def crac():
+    """A computer-room air conditioner: 1.8 m wide, 1.95 m tall, 0.85 m deep, facing -Z. The front
+    doors ("Panel") come off for filter service; the filter bank sits right behind them."""
+    md = Model('crac')
+    c, pnl = md.p('Cabinet'), md.p('Panel')
+    W, H, D = 1.8, 1.95, 0.85
+    c.box((0, H / 2, 0), (W, H, D), 'body', bevel=0.004)
+    c.box((0, 0.05, 0), (W - 0.02, 0.1, D - 0.02), 'dark')
+    for i in range(12):  # return-air intake on the roof
+        c.box((-0.8 + i * 0.145, H + 0.002, 0), (0.1, 0.004, D - 0.12), 'dark')
+    c.box((0, 1.38, -D / 2 - 0.001), (W - 0.12, 0.6, 0.004), 'dark')  # filter cavity behind the doors
+    c.box((0, 0.55, -D / 2 - 0.001), (W - 0.12, 0.7, 0.004), 'steel')  # fan section
+    for i in range(3):
+        c.cyl((-0.55 + i * 0.55, 0.55, -D / 2 - 0.004), 0.22, 0.004, 'z', 'dark', segs=20)
+    # The doors: two leaves with grilles, handles and the controller display.
+    pnl.box((0, H / 2 + 0.03, -D / 2 - 0.007), (W - 0.02, H - 0.16, 0.012), 'body', bevel=0.002)
+    pnl.box((0, H / 2 + 0.03, -D / 2 - 0.0135), (0.004, H - 0.18, 0.001), 'dark')
+    for sx in (-1, 1):
+        grille(pnl, sx * 0.45 - 0.36, sx * 0.45 + 0.36, 1.12, 1.66, -D / 2 - 0.014, 10, fill=0.45, vertical=False)
+        handle(pnl, sx * 0.05, 1.0, -D / 2 - 0.013, 0.014, 0.2, 0.03)
+    pnl.box((0.62, 1.78, -D / 2 - 0.0145), (0.24, 0.13, 0.003), 'dark')
+    pnl.box((0.62, 1.78, -D / 2 - 0.0162), (0.2, 0.1, 0.0006), 'lcd')
+    pnl.box((-0.62, 1.78, -D / 2 - 0.0142), (0.2, 0.05, 0.001), 'label')
+    return md
+
+
+@model
+def plant_panel():
+    """The plant wall by the entrance, facing -Z: generator 1's controller cabinet (+X) and the fire
+    alarm panel (-X), with conduit up to the ceiling. Back flat against the wall at +Z."""
+    md = Model('plant_panel')
+    p = md.p('Panels')
+    d = 0.24
+    # Generator controller.
+    p.box((0.45, 1.25, 0), (0.8, 1.3, d), 'steel', bevel=0.004)
+    p.box((0.45, 1.5, -d / 2 - 0.002), (0.46, 0.3, 0.004), 'dark')
+    p.box((0.45, 1.5, -d / 2 - 0.0045), (0.42, 0.26, 0.0006), 'lcd')
+    p.cyl((0.16, 1.08, -d / 2 - 0.012), 0.035, 0.024, 'z', 'red', segs=18)  # E-stop mushroom
+    p.box((0.16, 1.08, -d / 2 - 0.002), (0.1, 0.1, 0.004), 'yellow')
+    for i in range(4):
+        p.cyl((0.36 + i * 0.09, 1.08, -d / 2 - 0.006), 0.018, 0.012, 'z', 'trim' if i else 'blue', segs=14)
+    p.box((0.45, 0.85, -d / 2 - 0.0015), (0.5, 0.06, 0.002), 'label')
+    p.box((0.45, 1.97, -d / 2 - 0.0015), (0.3, 0.05, 0.002), 'label')
+    # Fire alarm panel.
+    p.box((-0.5, 1.45, 0.03), (0.56, 0.72, d - 0.06), 'red', bevel=0.004)
+    p.box((-0.5, 1.6, -d / 2 + 0.028), (0.3, 0.14, 0.004), 'dark')
+    p.box((-0.5, 1.6, -d / 2 + 0.0255), (0.27, 0.11, 0.0006), 'lcd')
+    for i in range(5):
+        p.box((-0.66 + i * 0.08, 1.35, -d / 2 + 0.027), (0.05, 0.035, 0.006), 'trim')
+    p.box((-0.5, 1.2, -d / 2 + 0.028), (0.4, 0.06, 0.002), 'label')
+    # Conduit to the ceiling.
+    for x in (0.25, 0.65, -0.5):
+        p.box((x, 2.75, 0.06), (0.05, 1.7, 0.05), 'steel')
+    return md
+
+
+@model
+def kiosk():
+    """The visitor sign-in kiosk: a pedestal with an angled touchscreen and a badge printer, facing -Z."""
+    md = Model('kiosk')
+    p, s = md.p('Kiosk'), md.p('Screen')
+    p.box((0, 0.03, 0), (0.6, 0.06, 0.5), 'dark', bevel=0.01)
+    p.box((0, 0.55, 0.02), (0.42, 1.0, 0.34), 'body', bevel=0.01)
+    p.box((0, 1.07, -0.02), (0.56, 0.05, 0.46), 'steel', bevel=0.008, rot=('x', 12))
+    p.box((0, 1.27, 0.08), (0.46, 0.32, 0.04), 'dark', bevel=0.006, rot=('x', -18))
+    s.box((0, 1.27, 0.058), (0.42, 0.28, 0.002), 'screen', rot=('x', -18))
+    p.box((0.2, 1.12, -0.12), (0.12, 0.08, 0.14), 'trim', bevel=0.006)  # badge printer
+    p.box((0.2, 1.165, -0.17), (0.08, 0.004, 0.04), 'dark')
+    p.box((0, 0.7, -0.152), (0.3, 0.12, 0.002), 'label')
     return md
 
 

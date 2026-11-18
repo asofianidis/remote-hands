@@ -71,7 +71,9 @@ namespace RH
             float dist = FitDistance(0.62f, py + 0.08f - minY + 0.12f, 0.88f);
             Look(new Vector3(0, cy, RackView.Depth / 2f + dist), new Vector3(0, cy, Back));
             title = $"Trace cable: U{task.u} {task.component} in {task.rack} (rear)";
-            hint = $"Follow the yellow jumper from U{task.u} {task.component} up through the tangle and click the patch panel port it lands on.";
+            hint = rack.tidy
+                ? $"This rack is labelled at both ends. Find U{task.u} {task.component}'s label on the patch panel and click its port."
+                : $"Follow the yellow jumper from U{task.u} {task.component} up through the tangle and click the patch panel port it lands on.";
         }
 
         protected override void Update(float dt, Vector2 m)
@@ -100,6 +102,9 @@ namespace RH
             Ui.Box(q, new Color(0.03f, 0.05f, 0.07f, 0.88f));
             Ui.Label(new Rect(q.x + 16, q.y + 10, q.width - 32, 50), $"Which patch panel port does <b>U{task.u} {task.component}</b> land on?", 18, Ui.Text);
             for (int i = 0; i < cabs.Count; i++) Chip(cabs[i].a, cabs[i].label, 12, cabs[i].target ? Ui.Accent : Ui.Text, i % 2 == 0 ? 16 : 36);
+            // A rack that's had a cable audit has every jumper labelled at both ends.
+            if (shift.Rack(task.rack).tidy)
+                for (int i = 0; i < cabs.Count; i++) Chip(ports[cabs[i].port - 1], cabs[i].label, 10, Ui.Good, cabs[i].port <= 12 ? -40 : 40);
             var m = Ui.Mouse;
             for (int i = 0; i < ports.Length; i++)
             {

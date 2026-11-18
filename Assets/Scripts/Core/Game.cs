@@ -18,7 +18,7 @@ namespace RH
         public Player player;
         public Minigame minigame;
         /// <summary>The rack panel being shown, or null when the panel is for a station (bench, dock, meet-me room).</summary>
-        public string currentRack, currentStation;
+        public string currentRack, currentStation, currentStationTitle;
         /// <summary>Whether the player opened the rack from the hot aisle behind it.</summary>
         public bool rearSide;
         public int selectedTicket, trackedTicket;
@@ -85,6 +85,7 @@ namespace RH
             CloseMinigame();
             toasts.Clear();
             TutorialReset();
+            ClearVisitor();
         }
 
         void Hook()
@@ -169,7 +170,9 @@ namespace RH
             confirmClockOut = false;
             cameraUp = false;
             CloseMinigame();
+            ClearVisitor();
             shift.End();
+            facility.SetPowerFail(false);
             ShiftSave.Delete();
             if (shift.Fired)
             {
@@ -205,7 +208,11 @@ namespace RH
             if (working)
             {
                 shiftSeconds += dt;
+                // The UPS batteries and the trainee run on real time, even with the tablet open.
+                shift.Tick(dt);
                 facility.SpawnDeliveries(shift);
+                facility.SetPowerFail(shift.ups > 0);
+                VisitorTick(dt);
                 if (shift.Fired)
                 {
                     // Reputation can hit zero in the middle of a job: that's the end of the shift, right now.
@@ -214,6 +221,7 @@ namespace RH
                     return;
                 }
             }
+            else facility.SetPowerFail(false);
             if (screen != GameScreen.Tablet) confirmClockOut = false;
             if (screen != GameScreen.Play) cameraUp = false;
             HandleInput();
@@ -226,6 +234,7 @@ namespace RH
                     if (minigame.success) shift.Complete(t);
                     CloseMinigame();
                     facility.Refresh(shift, t.rack);
+                    facility.RefreshStations(shift);
                     screen = GameScreen.Rack;
                 }
             }
@@ -317,10 +326,11 @@ namespace RH
             Audio.Play("beep");
         }
 
-        public void OpenStation(string id)
+        public void OpenStation(string id, string title = null)
         {
             currentRack = null;
             currentStation = id;
+            currentStationTitle = title;
             screen = GameScreen.Rack;
             Audio.Play("beep");
         }
@@ -377,14 +387,18 @@ namespace RH
         {
             if (shift.Blocker(t) != null) return;
             if (SideBlocker(t) is string side) { Toast(side, 2); return; }
-            if (t.kind == TaskKind.Ship)
+            if (t.kind == TaskKind.Ship || t.kind == TaskKind.Mop || t.kind == TaskKind.ResetAlarm)
             {
                 shift.working = shift.TicketOf(t);
                 shift.Complete(t);
                 Audio.Play("clunk");
-                Toast($"Unit {t.tag} is on the outbound pallet. Shipping will pick it up.", 1);
+                Toast(t.kind == TaskKind.Ship ? $"Unit {t.tag} is on the outbound pallet. Shipping will pick it up."
+                    : t.kind == TaskKind.Mop ? "You mopped up the water and dried the leak detection cable. Monitoring is green."
+                    : "Fire panel reset. The suppression system is back to normal standby.", 1);
+                facility.RefreshStations(shift);
                 return;
             }
+            if (t.kind == TaskKind.Escort) { Toast(shift.Blocker(t), 0); return; }
             if (t.kind == TaskKind.Photo) { Toast($"Raise your camera with [{Keys.Label(Keys.Action.Camera)}] and frame the {t.component} of {t.rack}.", 0); return; }
             minigame = Minigame.For(t);
             if (minigame == null) return;
@@ -397,8 +411,8 @@ namespace RH
             var inv = shift.inv;
             if (s.isPart)
             {
-                if (inv.PouchFull) { Toast($"Your tool pouch is full ({inv.pouchCap} parts).", 2); return; }
-                inv.pouch.Add(s.part);
+                if (inv.PouchFull) { Toast($"Your tool pouch is full ({inv.pouchCap} parts" + (inv.rma.Count > 0 ? $", {inv.rma.Count} of them failed parts for the returns bin" : "") + ").", 2); return; }
+                if (!shift.TakePart(s.part)) { Toast($"The {s.ItemName} shelf is empty. Order more from the STOCK page on your tablet: it arrives tomorrow.", 2); return; }
             }
             else
             {
@@ -420,6 +434,14 @@ namespace RH
         public void ReturnItem()
         {
             var inv = shift.inv;
+            if (inv.rma.Count > 0)
+            {
+                int n = inv.rma.Count;
+                int credit = shift.ReturnRma();
+                Toast($"{n} failed part{(n > 1 ? "s" : "")} sent back under RMA: +{Ui.Money(credit)} credit.", 1);
+                Audio.Play("pickup");
+                return;
+            }
             if (inv.hands.Count > 0)
             {
                 var it = inv.hands[inv.hands.Count - 1];
@@ -430,8 +452,9 @@ namespace RH
             }
             else if (inv.pouch.Count > 0)
             {
-                Toast($"Returned the {Catalog.PartName(inv.pouch[inv.pouch.Count - 1])}.", 0);
-                inv.pouch.RemoveAt(inv.pouch.Count - 1);
+                var p = inv.pouch[inv.pouch.Count - 1];
+                Toast($"Returned the {Catalog.PartName(p)} to the shelf.", 0);
+                shift.ReturnPart(p);
             }
             Audio.Play("pickup");
         }
@@ -482,13 +505,20 @@ namespace RH
         public Vector3? WaypointTarget()
         {
             var t = shift?.tickets.Find(x => x.id == trackedTicket && x.Open);
-            if (t == null) return null;
+            if (t == null || t.trainee) return null;
             var next = NextStep(t);
-            if (next == null) return facility.RackTop(t.rack, false);
+            if (next == null) return t.rack != null ? facility.RackTop(t.rack, false) : (Vector3?)null;
             var blocker = shift.Blocker(next);
             if (blocker == null) return Spot(next);
             switch (next.kind)
             {
+                case TaskKind.Escort:
+                    if (t.tasks.Any(x => x.kind == TaskKind.Badge && !x.done)) return facility.StationPos("kiosk");
+                    return next.component == "out" ? facility.StationPos("kiosk") : facility.RackTop(next.rack, false);
+                case TaskKind.Mop: return facility.StationPos($"crac{Shift.CracFor(next.u)}");
+                case TaskKind.ResetAlarm:
+                    var psu = t.tasks.FirstOrDefault(x => x.kind == TaskKind.SwapPsu && !x.done);
+                    return psu != null && shift.Blocker(psu) != null ? facility.ShelfPos(null, PartKind.Psu) : facility.RackTop(next.rack, true);
                 case TaskKind.Mount:
                     return next.tag != null ? ItemOnFloor(next.tag) : facility.ShelfPos(next.def, null);
                 case TaskKind.Wipe:
@@ -522,6 +552,90 @@ namespace RH
         public WorkTask NextStep(Ticket t) =>
             t.tasks.FirstOrDefault(x => !x.done && shift.Blocker(x) == null) ?? t.tasks.FirstOrDefault(x => !x.done);
 
+        // ================================================================ escorted visitors
+        Visitor visitor;
+        float visitorWork, visitorAlone;
+        readonly HashSet<int> visitorWarned = new HashSet<int>();
+
+        void ClearVisitor()
+        {
+            if (visitor != null) Destroy(visitor.gameObject);
+            visitor = null;
+            visitorWork = visitorAlone = 0;
+            visitorWarned.Clear();
+        }
+
+        /// <summary>The checked-in visitor follows the technician, works at their rack, and leaves from the kiosk.</summary>
+        void VisitorTick(float dt)
+        {
+            var t = shift.OpenTickets.FirstOrDefault(k => k.type == TicketType.Escort && k.tasks.Any(x => x.kind == TaskKind.Badge && x.done) && k.tasks.Any(x => !x.done));
+            if (t == null)
+            {
+                if (visitor != null) { Destroy(visitor.gameObject); visitor = null; }
+                return;
+            }
+            var inTask = t.tasks.First(x => x.kind == TaskKind.Escort && x.component == "in");
+            var outTask = t.tasks.First(x => x.kind == TaskKind.Escort && x.component == "out");
+            var kiosk = Facility.KioskPos + new Vector3(0.6f, 0f, 0.9f);
+            if (visitor == null || visitor.ticketId != t.id)
+            {
+                if (visitor != null) Destroy(visitor.gameObject);
+                visitor = Visitor.Spawn(facility.transform, inTask.done ? facility.RackFront(t.rack) : kiosk, Catalog.CustColor(t.customer), inTask.tag, t.id);
+                visitorWork = visitorAlone = 0;
+            }
+            var me = player.transform.position;
+            var vp = visitor.transform.position;
+            float dist = Vector2.Distance(new Vector2(me.x, me.z), new Vector2(vp.x, vp.z));
+            visitor.Record(me);
+            // Left alone on the floor: they wait, and after a while it counts against you (once per visit).
+            bool alone = dist > 8f;
+            visitorAlone = alone ? visitorAlone + dt : Mathf.Max(0, visitorAlone - dt * 2f);
+            if (visitorAlone > 6f && visitorWarned.Add(t.id))
+            {
+                shift.working = t;
+                shift.Mistake($"You left {inTask.tag} alone on the data hall floor. Visitors are escorted at all times", 2f);
+            }
+            if (!inTask.done)
+            {
+                var front = facility.RackFront(t.rack);
+                bool there = Vector2.Distance(new Vector2(vp.x, vp.z), new Vector2(front.x, front.z)) < 1.8f;
+                if (there && dist < 4f)
+                {
+                    visitor.GoTo(front, dt);
+                    visitorWork += dt;
+                    if (visitorWork > 12f)
+                    {
+                        shift.working = t;
+                        shift.Complete(inTask);
+                        Toast($"{inTask.tag} is done at {t.rack}. Walk them back to the security kiosk.", 1);
+                    }
+                }
+                else if (!alone) visitor.Follow(me, dt);
+            }
+            else
+            {
+                if (!alone) visitor.Follow(me, dt);
+                if (Vector2.Distance(new Vector2(vp.x, vp.z), new Vector2(kiosk.x, kiosk.z)) < 2.2f && dist < 4f)
+                {
+                    shift.working = t;
+                    shift.Complete(outTask);
+                    Toast($"{inTask.tag} signed out and handed back their badge.", 1);
+                }
+            }
+        }
+
+        /// <summary>What the visitor is doing, for the HUD (null when there's no visitor).</summary>
+        public string VisitorStatus()
+        {
+            if (visitor == null) return null;
+            var t = shift.tickets.Find(x => x.id == visitor.ticketId);
+            if (t == null) return null;
+            var inTask = t.tasks.First(x => x.kind == TaskKind.Escort && x.component == "in");
+            if (visitorAlone > 0.5f) return $"{visitor.visitorName} is waiting for you. Go back to them!";
+            if (!inTask.done) return visitorWork > 0 ? $"{visitor.visitorName} is working at {t.rack}: {Mathf.Max(0, 12f - visitorWork):0}s. Stay close." : $"Escorting {visitor.visitorName} to {t.rack}";
+            return $"Escorting {visitor.visitorName} back to the security kiosk";
+        }
+
         // ================================================================ screenshot mode (-shotdir <dir>)
         IEnumerator Start()
         {
@@ -548,7 +662,8 @@ namespace RH
             var tickets = new List<Ticket>();
             foreach (TicketType tt in System.Enum.GetValues(typeof(TicketType)))
             {
-                var t = shift.SpawnTicket(tt);
+                // Some types are one-at-a-time (a visitor, a receiving pallet): use today's if there is one.
+                var t = shift.SpawnTicket(tt) ?? shift.tickets.FirstOrDefault(k => k.type == tt && k.Open && !tickets.Contains(k));
                 if (t != null) tickets.Add(t);
             }
             facility.SpawnDeliveries(shift);
@@ -569,6 +684,12 @@ namespace RH
             yield return Shot("06_dock");
             player.Teleport(new Vector3(3f, 0f, 12f), -90f, 5f);
             yield return Shot("07_meetme");
+            player.Teleport(new Vector3(2.6f, 0f, 9.6f), -110f, 8f);
+            yield return Shot("07b_crac");
+            player.Teleport(new Vector3(7.4f, 0f, 3.4f), 205f, 10f);
+            yield return Shot("07c_plant_kiosk");
+            player.Teleport(new Vector3(18.4f, 0f, 17.6f), 50f, 14f);
+            yield return Shot("07d_receiving");
             player.Teleport(new Vector3(rp.x, 0f, Facility.RowFrontZ(rack.row) - 2.6f), 0f, 3f);
             cameraUp = true;
             screen = GameScreen.Play;
@@ -589,8 +710,14 @@ namespace RH
             selectedTicket = fw.id;
             OpenTablet();
             yield return Shot("09_tablet");
+            tabletTab = 1;
+            yield return Shot("10_tablet_customers");
             tabletTab = 2;
             yield return Shot("10_tablet_career");
+            tabletTab = 3;
+            yield return Shot("10_tablet_stock");
+            tabletTab = 4;
+            yield return Shot("10_tablet_record");
             tabletTab = 0;
             OpenRack(fw.rack);
             yield return Shot("11_rack_panel");
@@ -613,7 +740,7 @@ namespace RH
             {
                 yield return Play(t.tasks[0]);
                 CloseMinigame();
-                if (t.type == TicketType.FixIssue)
+                if (t.type == TicketType.FixIssue || t.type == TicketType.SwitchOutage)
                 {
                     shift.Complete(t.tasks[0]);
                     yield return Play(t.tasks[t.tasks.Count - 1]);
@@ -659,6 +786,42 @@ namespace RH
                 yield return Play(new WorkTask { kind = kind, rack = srv.r.label, deviceId = srv.d.id, u = srv.d.u });
                 CloseMinigame();
             }
+            // Every newer job, whatever today's random tickets happened to roll.
+            var owned = shift.racks.Where(r => r.owner != null && r.devices.Count >= 5).ToList();
+            var swRack = owned.First(r => Shift.SwitchOf(r) != null);
+            var sw = Shift.SwitchOf(swRack);
+            var shelf = shift.racks.SelectMany(r => r.devices.Select(d => (r, d))).FirstOrDefault(x => x.d.def == "ds4u");
+            var gapRack = owned.First(r => r.FreeUnits >= 6 && r.reserved.Count == 0);
+            gapRack.openGaps.Clear();
+            for (int u = 1; u <= Rack.Units && gapRack.openGaps.Count < 4; u++) if (gapRack.At(u) == null) gapRack.openGaps.Add(u);
+            facility.Refresh(shift, gapRack.label);
+            var extra = new List<WorkTask>
+            {
+                new WorkTask { kind = TaskKind.ConfigRestore, rack = swRack.label, deviceId = sw.id, u = sw.u },
+                new WorkTask { kind = TaskKind.PowerCycle, rack = swRack.label, deviceId = sw.id, u = sw.u },
+                new WorkTask { kind = TaskKind.Blanking, rack = gapRack.label },
+                new WorkTask { kind = TaskKind.CableTidy, rack = owned[1].label, slot = 5 },
+                new WorkTask { kind = TaskKind.Tiles, rack = owned[0].label, station = "aisle1", u = 1, slot = 4242 },
+                new WorkTask { kind = TaskKind.CracService, station = "crac1", u = 1, slot = 77 },
+                new WorkTask { kind = TaskKind.Valve, station = "crac2", u = 2 },
+                new WorkTask { kind = TaskKind.Generator, station = "plant", component = "fuel" },
+                new WorkTask { kind = TaskKind.SwapDrive, rack = swRack.label, deviceId = owned.SelectMany(r => r.devices).First(d => d.Def.bays > 0).id, component = "locate" },
+            };
+            if (shelf.d != null) extra.Add(new WorkTask { kind = TaskKind.SasPath, rack = shelf.r.label, deviceId = shelf.d.id, u = shelf.d.u, slot = 1 });
+            foreach (var task in extra)
+            {
+                shift.ups = task.kind == TaskKind.Generator ? 95f : 0f;
+                if (task.kind == TaskKind.SwapDrive)
+                {
+                    var host = shift.racks.First(r => r.devices.Any(d => d.id == task.deviceId));
+                    task.rack = host.label;
+                    task.u = host.devices.First(d => d.id == task.deviceId).u;
+                    host.devices.First(d => d.id == task.deviceId).failedBay = 0;
+                }
+                yield return Play(task);
+                CloseMinigame();
+            }
+            shift.ups = 0;
             screen = GameScreen.Play;
             yield return Shot($"{n++:00}_hud");
             OpenSettings();
@@ -666,6 +829,7 @@ namespace RH
             screen = GameScreen.Play;
             confirmClockOut = false;
             career.rep = 100f; // a screenshot shift hands over a pile of tickets; don't get fired for it
+            foreach (var k in shift.OpenTickets.Skip(4).ToList()) shift.tickets.Remove(k);
             OpenTablet();
             ClockOut();
             yield return Shot($"{n++:00}_clockout_confirm");

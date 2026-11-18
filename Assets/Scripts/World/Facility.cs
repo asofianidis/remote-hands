@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace RH
@@ -13,12 +14,26 @@ namespace RH
         public readonly Dictionary<string, RackView> racks = new Dictionary<string, RackView>();
         readonly List<StockShelf> shelves = new List<StockShelf>();
         readonly Dictionary<string, Vector3> stations = new Dictionary<string, Vector3>();
-        Transform root, dynamic;
+        readonly List<Light> hallLights = new List<Light>();
+        readonly Dictionary<int, GameObject> cracs = new Dictionary<int, GameObject>();
+        Transform root, dynamic, stationDyn;
+        Light sun;
         GameObject marker;
-        int deliverySlot;
+        int deliverySlot, cols = Shift.RacksPerRow;
+        bool powerFail;
 
         public static Vector3 RackPos(int row, int col) => new Vector3(3.6f + (col - 1) * 0.62f, 0f, 7f + row * 4f);
         public static float RowFrontZ(int row) => 7f + row * 4f - RackView.Depth / 2f;
+
+        // Building plant: two CRAC units on the west wall (facing east), the plant wall by the entrance
+        // (generator controller and fire panel, facing north), the visitor kiosk and the receiving bay.
+        public const float CracDepth = 0.85f, CracWidth = 1.8f, CracHeight = 1.95f;
+        public static Vector3 CracPos(int n) => new Vector3(0.55f, 0f, n == 1 ? 7.4f : 17.6f);
+        /// <summary>The chilled-water manifold on the wall next to a CRAC: four loops, x on the wall, z along it.</summary>
+        public static float ValveZ(int n, int loop) => CracPos(n).z + 1.25f + loop * 0.32f;
+        public static readonly Vector3 PlantPos = new Vector3(9.6f, 0f, 0.12f);
+        public static readonly Vector3 KioskPos = new Vector3(4.6f, 0f, 0.5f);
+        public static readonly Vector3 ReceivingPos = new Vector3(20.3f, 0f, 19.4f);
 
         public void Build(Shift shift)
         {
@@ -26,11 +41,17 @@ namespace RH
             racks.Clear();
             shelves.Clear();
             stations.Clear();
+            hallLights.Clear();
+            cracs.Clear();
+            powerFail = false;
             deliverySlot = 0;
+            cols = Shift.ColsOf(shift.racks);
             root = new GameObject("Hall").transform;
             root.SetParent(transform, false);
             dynamic = new GameObject("Dynamic").transform;
             dynamic.SetParent(root, false);
+            stationDyn = new GameObject("Station props").transform;
+            stationDyn.SetParent(root, false);
 
             BuildShell();
             BuildLights();
@@ -49,6 +70,11 @@ namespace RH
             BuildDock();
             BuildNoc();
             BuildMeetMe();
+            BuildCracs();
+            BuildPlant();
+            BuildKiosk();
+            BuildReceiving();
+            RefreshStations(shift);
 
             marker = Mats.Box(root, Vector3.zero, new Vector3(0.22f, 0.22f, 0.22f), Mats.Glow(new Color(0.3f, 0.85f, 1f), 4f), false, false, "waypoint");
             marker.transform.rotation = Quaternion.Euler(45, 0, 45);
@@ -96,7 +122,7 @@ namespace RH
             RenderSettings.ambientGroundColor = new Color(0.2f, 0.21f, 0.23f);
             RenderSettings.fog = false;
 
-            var sun = new GameObject("Key light").AddComponent<Light>();
+            sun = new GameObject("Key light").AddComponent<Light>();
             sun.transform.SetParent(root, false);
             sun.type = LightType.Directional;
             sun.intensity = 0.55f;
@@ -117,17 +143,49 @@ namespace RH
                     l.intensity = 2.2f;
                     l.color = new Color(0.9f, 0.95f, 1f);
                     l.shadows = LightShadows.None;
+                    hallLights.Add(l);
                 }
+        }
+
+        /// <summary>On UPS after a utility failure, only the emergency lighting stays on: dim and red.</summary>
+        public void SetPowerFail(bool on)
+        {
+            if (on == powerFail) return;
+            powerFail = on;
+            foreach (var l in hallLights)
+            {
+                if (l == null) continue;
+                l.intensity = on ? 0.9f : 2.2f;
+                l.color = on ? new Color(1f, 0.35f, 0.3f) : new Color(0.9f, 0.95f, 1f);
+            }
+            float k = on ? 0.4f : 1f;
+            RenderSettings.ambientSkyColor = new Color(0.5f, 0.55f, 0.62f) * k;
+            RenderSettings.ambientEquatorColor = new Color(0.36f, 0.39f, 0.43f) * k;
+            RenderSettings.ambientGroundColor = new Color(0.2f, 0.21f, 0.23f) * k;
+            if (sun != null) sun.intensity = on ? 0.15f : 0.55f;
         }
 
         void BuildRowDressing()
         {
             var cold = Mats.Lit(new Color(0.47f, 0.52f, 0.6f), 0.15f);
             var hot = Mats.Lit(new Color(0.6f, 0.5f, 0.47f), 0.15f);
+            var tape = Mats.Lit(new Color(0.95f, 0.75f, 0.1f));
             for (int r = 0; r < Shift.Rows.Length; r++)
             {
                 var a = RackPos(r, 1);
-                var b = RackPos(r, Shift.RacksPerRow);
+                var b = RackPos(r, cols);
+                // Until the expansion cages open, their footprint is taped out on the floor.
+                if (cols == Shift.RacksPerRow)
+                {
+                    var e0 = RackPos(r, Shift.RacksPerRow + 1);
+                    var e1 = RackPos(r, Shift.RacksPerRow + Shift.ExpansionCols);
+                    float ex = (e0.x + e1.x) / 2f, ew = e1.x - e0.x + RackView.Width;
+                    Mats.Box(root, new Vector3(ex, 0.003f, e0.z - RackView.Depth / 2f), new Vector3(ew, 0.004f, 0.06f), tape, false, false);
+                    Mats.Box(root, new Vector3(ex, 0.003f, e0.z + RackView.Depth / 2f), new Vector3(ew, 0.004f, 0.06f), tape, false, false);
+                    Mats.Box(root, new Vector3(e1.x + RackView.Width / 2f, 0.003f, e0.z), new Vector3(0.06f, 0.004f, RackView.Depth), tape, false, false);
+                    var label = Mats.Text(root, new Vector3(ex, 0.01f, e0.z), "FUTURE EXPANSION", 0.09f, new Color(0.95f, 0.75f, 0.1f));
+                    label.transform.localRotation = Quaternion.Euler(90f, 0, 0);
+                }
                 float cx = (a.x + b.x) / 2f, len = b.x - a.x + RackView.Width;
                 // Overhead cable tray and perforated cold-aisle tiles in front of the row.
                 Models.Spawn("cable_tray", root, new Vector3(cx, 2.52f, a.z + 0.2f));
@@ -142,9 +200,113 @@ namespace RH
                 {
                     Models.Spawn("row_sign", root, new Vector3(x, 2.35f, sz), palette: Models.With("body", Mats.Lit(new Color(0.08f, 0.1f, 0.13f))));
                     float off = yaw > 0 ? -0.025f : 0.025f;
-                    Mats.Text(root, new Vector3(x + off, 2.35f, sz), $"{name}  {Shift.Rows[r]}01-{Shift.Rows[r]}{Shift.RacksPerRow:00}", 0.16f, new Color(0.5f, 0.85f, 1f), TextAnchor.MiddleCenter, yaw);
+                    Mats.Text(root, new Vector3(x + off, 2.35f, sz), $"{name}  {Shift.Rows[r]}01-{Shift.Rows[r]}{cols:00}", 0.16f, new Color(0.5f, 0.85f, 1f), TextAnchor.MiddleCenter, yaw);
                 }
+                // The cold aisle floor is where tile jobs happen: a walk-on trigger that only offers itself when there's work.
+                var aisle = Mats.Box(root, new Vector3(cx, 0.05f, RowFrontZ(r) - 0.6f), new Vector3(len, 0.1f, 1.2f), cold, true, false, "cold aisle tiles");
+                aisle.GetComponent<Renderer>().enabled = false;
+                aisle.GetComponent<Collider>().isTrigger = true;
+                AddStation(aisle, $"aisle{r}", $"Row {Shift.Rows[r]} cold aisle floor tiles", true);
+                stations[$"aisle{r}"] = new Vector3(cx, 0.6f, RowFrontZ(r) - 0.6f);
             }
+        }
+
+        /// <summary>Two CRAC units on the west wall, each with its chilled-water manifold beside it.</summary>
+        void BuildCracs()
+        {
+            for (int n = 1; n <= 2; n++)
+            {
+                var p = CracPos(n);
+                var g = Models.Spawn("crac", root, p, Quaternion.Euler(0, -90f, 0), Models.With("body", Mats.Lit(new Color(0.78f, 0.8f, 0.82f), 0.3f, 0.2f)));
+                var col = g.AddComponent<BoxCollider>();
+                col.center = new Vector3(0, CracHeight / 2f, 0);
+                col.size = new Vector3(CracWidth, CracHeight, CracDepth);
+                AddStation(g, $"crac{n}", $"CRAC-{n} (cooling unit)");
+                cracs[n] = g;
+                stations[$"crac{n}"] = p + new Vector3(0.6f, 2.25f, 0);
+                Mats.Text(root, new Vector3(p.x + CracDepth / 2f + 0.01f, CracHeight + 0.15f, p.z), $"CRAC-{n}", 0.16f, new Color(0.6f, 0.85f, 1f), TextAnchor.MiddleCenter, -90f);
+                // Manifold: one chilled-water loop per row it serves, its own main, and the humidifier.
+                var man = new GameObject($"CRAC-{n} manifold");
+                man.transform.SetParent(root, false);
+                var pipe = Mats.Lit(new Color(0.2f, 0.35f, 0.6f), 0.4f, 0.4f);
+                var valve = Mats.Lit(new Color(0.55f, 0.58f, 0.62f), 0.5f, 0.7f);
+                int r0 = (n - 1) * 2;
+                string[] loops = { $"ROW {Shift.Rows[r0]}", $"ROW {Shift.Rows[r0 + 1]}", "MAIN", "HUMID." };
+                for (int i = 0; i < 4; i++)
+                {
+                    float z = ValveZ(n, i);
+                    Mats.Box(man.transform, new Vector3(0.12f, HallH / 2f, z), new Vector3(0.06f, HallH, 0.06f), pipe);
+                    foreach (float y in new[] { 1.62f, 1.02f }) Mats.Box(man.transform, new Vector3(0.16f, y, z), new Vector3(0.08f, 0.1f, 0.1f), valve);
+                    Mats.Text(man.transform, new Vector3(0.2f, 2.0f, z), loops[i], 0.06f, Color.white, TextAnchor.MiddleCenter, -90f);
+                }
+                var mc = man.AddComponent<BoxCollider>();
+                mc.center = new Vector3(0.15f, 1.3f, (ValveZ(n, 0) + ValveZ(n, 3)) / 2f);
+                mc.size = new Vector3(0.3f, 1.4f, ValveZ(n, 3) - ValveZ(n, 0) + 0.3f);
+                AddStation(man, $"crac{n}", $"CRAC-{n} chilled-water valves");
+            }
+        }
+
+        /// <summary>Hide a CRAC's front panel while its filters are being swapped.</summary>
+        public void ShowCracPanel(int n, bool on)
+        {
+            if (cracs.TryGetValue(n, out var g) && g != null) Models.ShowPart(g, "Panel", on);
+        }
+
+        /// <summary>The plant wall by the entrance: generator controller and fire alarm panel.</summary>
+        void BuildPlant()
+        {
+            var g = Models.Spawn("plant_panel", root, PlantPos, Quaternion.Euler(0, 180f, 0));
+            var col = g.AddComponent<BoxCollider>();
+            col.center = new Vector3(0, 1.2f, 0);
+            col.size = new Vector3(1.9f, 2.0f, 0.4f);
+            AddStation(g, "plant", "Generator controller & fire panel");
+            stations["plant"] = PlantPos + new Vector3(0, 2.4f, 0.3f);
+            Mats.Text(root, PlantPos + new Vector3(0, 2.45f, 0.05f), "PLANT  /  GEN-1  /  FIRE", 0.13f, new Color(1f, 0.6f, 0.45f), TextAnchor.MiddleCenter, 180f);
+        }
+
+        /// <summary>The security kiosk by the entrance, where visitors wait to be checked in.</summary>
+        void BuildKiosk()
+        {
+            var g = Models.Spawn("kiosk", root, KioskPos, Quaternion.Euler(0, 180f, 0));
+            var col = g.AddComponent<BoxCollider>();
+            col.center = new Vector3(0, 0.65f, 0);
+            col.size = new Vector3(0.7f, 1.3f, 0.6f);
+            AddStation(g, "kiosk", "Security kiosk");
+            stations["kiosk"] = KioskPos + new Vector3(0, 1.75f, 0.3f);
+            Mats.Text(root, KioskPos + new Vector3(0, 2.1f, -0.15f), "SECURITY  /  VISITORS", 0.11f, new Color(0.6f, 0.85f, 1f), TextAnchor.MiddleCenter, 180f);
+        }
+
+        /// <summary>The receiving bay next to the dock: inbound spares get checked here before they hit the shelves.</summary>
+        void BuildReceiving()
+        {
+            var g = Models.Spawn("pallet", root, ReceivingPos, palette: Models.With("wood", Mats.Lit(new Color(0.45f, 0.55f, 0.35f), 0.2f)), collider: true);
+            AddStation(g, "receiving", "Receiving bay");
+            stations["receiving"] = ReceivingPos + new Vector3(0, 1.2f, 0);
+            Models.Spawn("outbound_sign", root, ReceivingPos + new Vector3(0, 0, 0.7f), palette: Models.With("plastic", Mats.Lit(new Color(0.15f, 0.3f, 0.15f))));
+            Mats.Text(root, ReceivingPos + new Vector3(0, 1.9f, 0.65f), "RECEIVING", 0.16f, Color.white, TextAnchor.MiddleCenter, 0f);
+        }
+
+        /// <summary>Props that come and go with the tickets: the leak puddle and the cartons waiting at receiving.</summary>
+        public void RefreshStations(Shift shift)
+        {
+            if (stationDyn == null) return;
+            foreach (Transform c in stationDyn) Destroy(c.gameObject);
+            stations.Remove("leak");
+            var mop = shift.TasksAtStation("leak").FirstOrDefault(x => !x.task.done).task;
+            if (mop != null && racks.TryGetValue(mop.rack, out var rv))
+            {
+                var p = new Vector3(rv.transform.position.x, 0.004f, RowFrontZ(mop.u) - 0.65f);
+                var puddle = Mats.Box(stationDyn, p, new Vector3(1.6f, 0.006f, 1.0f), Mats.Glass(new Color(0.3f, 0.55f, 0.9f, 0.55f)), true, false, "puddle");
+                puddle.GetComponent<Collider>().isTrigger = true;
+                var trig = puddle.GetComponent<BoxCollider>();
+                trig.size = new Vector3(1f, 40f, 1f);
+                AddStation(puddle, "leak", "Water on the floor", true);
+                stations["leak"] = p + Vector3.up * 0.8f;
+            }
+            var recv = shift.TasksAtStation("receiving").FirstOrDefault(x => !x.task.done);
+            if (recv.task != null)
+                for (int i = 0; i < Mathf.Min(8, recv.ticket.cartons.Count); i++)
+                    Models.Spawn("carton_2u", stationDyn, ReceivingPos + new Vector3((i % 4 % 2) * 0.5f - 0.25f, 0.141f + (i / 4) * 0.185f, (i % 4 / 2) * 0.48f - 0.24f));
         }
 
         void BuildStorage()
@@ -200,11 +362,12 @@ namespace RH
             Mats.Text(ct, new Vector3(0, 1.5f, 0.05f), "CRASH CART (KVM)", 0.08f, new Color(0.85f, 0.92f, 1f), TextAnchor.MiddleCenter, 0f);
         }
 
-        void AddStation(GameObject g, string id, string name)
+        void AddStation(GameObject g, string id, string name, bool onlyWithWork = false)
         {
             var s = g.AddComponent<Station>();
             s.id = id;
             s.title = name;
+            s.onlyWithWork = onlyWithWork;
         }
 
         /// <summary>The meet-me room cross-connect frame on the west wall, where carriers' panels meet the customers'.</summary>
@@ -268,6 +431,7 @@ namespace RH
         public void RefreshAll(Shift shift)
         {
             foreach (var r in shift.racks) Refresh(shift, r.label);
+            RefreshStations(shift);
         }
 
         public void SpawnDeliveries(Shift shift)
@@ -324,10 +488,14 @@ namespace RH
 
         /// <summary>Marker spot above a rack, nudged toward the side (front or rear) the job is done from.</summary>
         public Vector3 RackTop(string label, bool rear) =>
-            racks.TryGetValue(label, out var v) ? v.transform.position + new Vector3(0, RackView.Height + 0.25f, rear ? 0.7f : -0.7f) : Vector3.zero;
+            label != null && racks.TryGetValue(label, out var v) ? v.transform.position + new Vector3(0, RackView.Height + 0.25f, rear ? 0.7f : -0.7f) : Vector3.zero;
 
         /// <summary>Racks face -Z (the cold aisle); anything at a larger Z is behind them, in the hot aisle.</summary>
-        public bool IsBehind(string label, Vector3 pos) => racks.TryGetValue(label, out var v) && pos.z > v.transform.position.z;
+        public bool IsBehind(string label, Vector3 pos) => label != null && racks.TryGetValue(label, out var v) && pos.z > v.transform.position.z;
+
+        /// <summary>The spot a visitor stands at to work on a rack: in the cold aisle, in front of it.</summary>
+        public Vector3 RackFront(string label) =>
+            label != null && racks.TryGetValue(label, out var v) ? v.transform.position + new Vector3(0, 0, -RackView.Depth / 2f - 0.75f) : Vector3.zero;
 
         /// <summary>
         /// Does the camera see the whole front (or rear) face of the rack, from that side, close enough to
@@ -381,7 +549,7 @@ namespace RH
             for (int r = 0; r < Shift.Rows.Length; r++)
             {
                 float rear = RowFrontZ(r) + RackView.Depth;
-                if (pos.z > rear && pos.z < rear + 2f && pos.x > RackPos(r, 1).x - 1f && pos.x < RackPos(r, Shift.RacksPerRow).x + 1f) level += 0.15f;
+                if (pos.z > rear && pos.z < rear + 2f && pos.x > RackPos(r, 1).x - 1f && pos.x < RackPos(r, cols).x + 1f) level += 0.15f;
             }
             return Mathf.Clamp01(level);
         }

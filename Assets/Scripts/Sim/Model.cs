@@ -9,7 +9,7 @@ namespace RH
     /// What's wrong with a device. NoPower and ArrayCritical are only ever caused by the technician
     /// (pulling the wrong PSU, cord or drive) and come with a follow-up ticket.
     /// </summary>
-    public enum Fault { None, LinkDown, BadSfp, Hung, BadDimm, FanFail, NoPower, ArrayCritical }
+    public enum Fault { None, LinkDown, BadSfp, Hung, BadDimm, FanFail, NoPower, ArrayCritical, ConfigLost }
 
     /// <summary>JsonUtility writes null strings as "". These turn them back into nulls after loading.</summary>
     static class Json
@@ -61,6 +61,14 @@ namespace RH
         public List<Device> devices = new List<Device>();
         /// <summary>U ranges promised to open install tickets (x = bottom U, y = height).</summary>
         public List<Vector2Int> reserved = new List<Vector2Int>();
+        /// <summary>Empty U slots with no blanking panel, so hot exhaust leaks back to the front.</summary>
+        public List<int> openGaps = new List<int>();
+        /// <summary>Inlet air is running hot (missing blanking panels, bad floor tiles or a dirty CRAC).</summary>
+        public bool hot;
+        /// <summary>Cables dressed and labelled: later jobs at the rear are easier to read.</summary>
+        public bool tidy;
+        /// <summary>Career day of the last preventive maintenance here (0 = never).</summary>
+        public int pmDay;
 
         public Device At(int u)
         {
@@ -101,11 +109,16 @@ namespace RH
         public void OnAfterDeserialize() { owner = Json.N(owner); }
     }
 
-    public enum TicketType { Expand, FixIssue, ReplaceHardware, Firmware, RackCustomer, NewContract, Decommission, SmartHands, CrossConnect, PowerAudit }
+    public enum TicketType
+    {
+        Expand, FixIssue, ReplaceHardware, Firmware, RackCustomer, NewContract, Decommission, SmartHands, CrossConnect, PowerAudit,
+        SwitchOutage, StorageService, Cooling, CableAudit, Receiving, Escort, Maintenance, Emergency,
+    }
     public enum TaskKind
     {
         Mount, Cable, SwapDrive, SwapPsu, SwapSfp, Firmware, Diagnose, PowerCycle, Reseat,
         Unmount, Uncable, Wipe, Ship, SwapDimm, SwapFan, Inspect, Photo, Power, Trace, Patch, PowerOn, RaidRebuild,
+        ConfigRestore, SasPath, Blanking, Tiles, CracService, CableTidy, Receive, Badge, Escort, HealthCheck, Generator, Valve, Mop, ResetAlarm,
     }
     public enum TicketStatus { Open, Done, HandedOver }
 
@@ -143,11 +156,18 @@ namespace RH
         public bool followUp;
         /// <summary>A P1 that was left open while lower-priority work got closed: no rush bonus.</summary>
         public bool neglected;
+        /// <summary>Emergencies: "power", "leak" or "vesda".</summary>
+        public string variant;
+        /// <summary>Handed to the trainee, who finishes it after traineeTime seconds on the floor.</summary>
+        public bool trainee;
+        public float traineeTime;
         public List<WorkTask> tasks = new List<WorkTask>();
+        /// <summary>Receiving: the cartons on the inbound pallet.</summary>
+        public List<Carton> cartons = new List<Carton>();
 
         public int DoneCount { get { int n = 0; foreach (var t in tasks) if (t.done) n++; return n; } }
         public bool Open => status == TicketStatus.Open;
-        public string TypeLabel => followUp ? "Follow-up incident" : TypeName(type);
+        public string TypeLabel => followUp ? "Follow-up incident" : type == TicketType.Emergency ? EmergencyName(variant) : TypeName(type);
         public string PriorityLabel => $"P{priority}";
         public bool RushBonus => priority == 1 && !neglected && !followUp;
 
@@ -162,8 +182,41 @@ namespace RH
             TicketType.Decommission => "Decommission",
             TicketType.SmartHands => "Smart hands",
             TicketType.CrossConnect => "Cross-connect",
+            TicketType.SwitchOutage => "Switch outage",
+            TicketType.StorageService => "Storage service",
+            TicketType.Cooling => "Cooling",
+            TicketType.CableAudit => "Cable audit",
+            TicketType.Receiving => "Receiving",
+            TicketType.Escort => "Visitor escort",
+            TicketType.Maintenance => "Preventive maintenance",
+            TicketType.Emergency => "Facility emergency",
             _ => "PDU rebalancing",
         };
+
+        public static string EmergencyName(string v) => v switch
+        {
+            "power" => "Utility power failure",
+            "leak" => "Water leak",
+            _ => "Smoke alarm",
+        };
+    }
+
+    /// <summary>One carton on an inbound pallet: what the label says, and what's really wrong with it.</summary>
+    [Serializable]
+    public class Carton
+    {
+        public PartKind part;
+        public int qty;
+        public string po;
+        /// <summary>Crushed or the tip-and-tell indicator tripped: refuse it.</summary>
+        public bool damaged;
+        /// <summary>Addressed to another site: refuse it.</summary>
+        public bool foreign;
+        /// <summary>Ordered by the technician (refused ones are re-shipped).</summary>
+        public bool ordered;
+        /// <summary>Set by the receiving job: 0 undecided, 1 accepted, 2 refused.</summary>
+        public int decision;
+        public bool Good => !damaged && !foreign;
     }
 
     /// <summary>A piece of rack equipment (or the crash cart) the technician can carry.</summary>
@@ -184,10 +237,12 @@ namespace RH
     {
         public readonly List<Item> hands = new List<Item>();
         public readonly List<PartKind> pouch = new List<PartKind>();
+        /// <summary>Failed parts in RMA bags. They take pouch space until they go in the returns bin.</summary>
+        public readonly List<PartKind> rma = new List<PartKind>();
         public int handCap = 1, pouchCap = 4;
 
         public bool HandsFull => hands.Count >= handCap;
-        public bool PouchFull => pouch.Count >= pouchCap;
+        public bool PouchFull => pouch.Count + rma.Count >= pouchCap;
         public bool Has(string def, string tag) => hands.Exists(i => i.def == def && i.tag == tag);
         public bool HasPart(PartKind k) => pouch.Contains(k);
 
@@ -210,6 +265,32 @@ namespace RH
         public float sat = 60f;
     }
 
+    [Serializable]
+    public class StockLine
+    {
+        public PartKind part;
+        public int count;
+    }
+
+    /// <summary>Lifetime counters for the record page and achievements.</summary>
+    [Serializable]
+    public class CareerStats
+    {
+        public int drivesShredded, partsSwapped, racksBuilt, racksTidied, visitors, impostorsCaught, emergencies,
+                   caughtEarly, perfectWeeks, p1First, streak, bestStreak, rmaReturned, partsOrdered;
+    }
+
+    /// <summary>One goal of the current week's review.</summary>
+    [Serializable]
+    public class Goal
+    {
+        public string id;
+        public int target, progress;
+        /// <summary>Streak goals ("hand nothing over") start met and break for good.</summary>
+        public bool broken;
+        public bool Met => Catalog.GoalIsStreak(id) ? !broken : progress >= target;
+    }
+
     /// <summary>Everything that persists between shifts, including the data hall itself.</summary>
     [Serializable]
     public class Career
@@ -221,8 +302,39 @@ namespace RH
         public List<string> upgrades = new List<string>();
         public List<Rack> hall = new List<Rack>();
         public List<CustRel> customers = new List<CustRel>();
+        /// <summary>Spare parts on the storage room shelves.</summary>
+        public List<StockLine> stock = new List<StockLine>();
+        /// <summary>Parts ordered from procurement; they arrive at the dock the next morning.</summary>
+        public List<StockLine> orders = new List<StockLine>();
+        public CareerStats stats = new CareerStats();
+        public List<string> achievements = new List<string>();
+        /// <summary>The current week: the day it started and its review goals.</summary>
+        public int weekStart;
+        public List<Goal> goals = new List<Goal>();
+        /// <summary>Tickets the trainee has closed; they get better with practice.</summary>
+        public int traineeDone;
+        public int lastEmergencyDay;
 
         public bool Has(string id) => upgrades.Contains(id);
+
+        public int Stock(PartKind k) => stock.Find(s => s.part == k)?.count ?? 0;
+        public void AddStock(PartKind k, int n)
+        {
+            var s = stock.Find(x => x.part == k);
+            if (s == null) stock.Add(s = new StockLine { part = k });
+            s.count = Math.Max(0, s.count + n);
+        }
+        public int Ordered(PartKind k) => orders.Find(s => s.part == k)?.count ?? 0;
+        public void AddOrder(PartKind k, int n)
+        {
+            var s = orders.Find(x => x.part == k);
+            if (s == null) orders.Add(s = new StockLine { part = k });
+            s.count += n;
+            orders.RemoveAll(x => x.count <= 0);
+        }
+
+        /// <summary>The trainee's chance of getting a ticket right: 75% at first, 95% after plenty of practice.</summary>
+        public float TraineeSkill => Mathf.Min(0.95f, 0.75f + traineeDone * 0.01f);
 
         public int Level
         {
@@ -241,10 +353,15 @@ namespace RH
             if (string.IsNullOrEmpty(customer)) return;
             var c = customers.Find(x => x.name == customer);
             if (c == null) customers.Add(c = new CustRel { name = customer });
+            if (Catalog.TraitOf(customer) == Trait.Fickle) d *= 1.5f;
             c.sat = Mathf.Clamp(c.sat + d, 0f, 100f);
         }
-        /// <summary>Happy customers tip, unhappy ones haggle: 0.9x at 0 satisfaction, 1.15x at 100.</summary>
-        public float CustMul(string customer) => 0.9f + Sat(customer) / 400f;
+        /// <summary>
+        /// Happy customers tip, unhappy ones haggle: 0.9x at 0 satisfaction, 1.15x at 100
+        /// (1.2x for a generous customer).
+        /// </summary>
+        public float CustMul(string customer) =>
+            0.9f + Sat(customer) / 400f + (Catalog.TraitOf(customer) == Trait.Generous ? Sat(customer) / 2000f : 0f);
 
         public static string PathOverride;
         public static string SavePath => PathOverride ?? Path.Combine(Application.persistentDataPath, "career.json");
@@ -282,11 +399,15 @@ namespace RH
     public class ShiftSave
     {
         public List<Ticket> tickets = new List<Ticket>();
+        /// <summary>Optional preventive-maintenance work not yet accepted.</summary>
+        public List<Ticket> offers = new List<Ticket>();
         public List<Item> hands = new List<Item>();
         public List<PartKind> pouch = new List<PartKind>();
+        public List<PartKind> rma = new List<PartKind>();
         public List<FloorItem> floor = new List<FloorItem>();
-        public int earned, completed, mistakes, handedOver, interrupts, tracked, xpStart;
-        public float repStart, seconds, playerYaw;
+        public int earned, completed, mistakes, handedOver, interrupts, tracked, xpStart, emergencyAfter;
+        public float repStart, seconds, playerYaw, ups;
+        public string emergencyKind;
         public Vector3 playerPos;
 
         public static string SavePath => Path.Combine(Path.GetDirectoryName(Career.SavePath), "shift.json");

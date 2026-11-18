@@ -90,8 +90,16 @@ namespace RH
             }
 
             focus = null;
-            if (inputEnabled && !g.cameraUp && Physics.Raycast(cam.transform.position, cam.transform.forward, out var hit, 2.6f))
-                focus = hit.collider.GetComponentInParent<Interactable>();
+            if (inputEnabled && !g.cameraUp)
+            {
+                // Solid things first; floor-level triggers (cold-aisle tiles, a puddle) only when nothing solid is in the way.
+                foreach (var q in new[] { QueryTriggerInteraction.Ignore, QueryTriggerInteraction.Collide })
+                {
+                    if (!Physics.Raycast(cam.transform.position, cam.transform.forward, out var hit, 2.6f, ~0, q)) continue;
+                    var it = hit.collider.GetComponentInParent<Interactable>();
+                    if (it != null && it.Active(g)) { focus = it; break; }
+                }
+            }
 
             if (inv != null) SyncHeld(inv);
         }
