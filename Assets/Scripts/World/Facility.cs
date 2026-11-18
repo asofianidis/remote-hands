@@ -69,9 +69,8 @@ namespace RH
             Mats.Box(root, new Vector3(6.5f, HallH / 2, HallD + 0.1f), new Vector3(13.4f, HallH, 0.2f), wall, true, false, "wall N1");
             Mats.Box(root, new Vector3(20.5f, HallH / 2, HallD + 0.1f), new Vector3(3.4f, HallH, 0.2f), wall, true, false, "wall N2");
             Mats.Box(root, new Vector3(16f, 3.15f, HallD + 0.1f), new Vector3(5.6f, 0.9f, 0.2f), wall, true, false, "door header");
-            var door = Mats.Lit(new Color(0.42f, 0.45f, 0.48f), 0.3f, 0.5f);
-            for (int i = 0; i < 9; i++)
-                Mats.Box(root, new Vector3(16f, 0.15f + i * 0.3f, HallD + 0.05f), new Vector3(5.6f, 0.27f, 0.08f), door, true, false, "door slat");
+            var door = Models.Spawn("rollup_door", root, new Vector3(16f, 0f, HallD + 0.03f));
+            Models.FitCollider(door);
 
             // Floor tile grid and hazard striping at the dock.
             var seam = Mats.Lit(new Color(0.42f, 0.44f, 0.47f));
@@ -106,11 +105,10 @@ namespace RH
             sun.shadowStrength = 0.6f;
             sun.transform.rotation = Quaternion.Euler(62f, -35f, 0f);
 
-            var panel = Mats.Glow(new Color(0.95f, 0.98f, 1f), 2.5f);
             foreach (float x in new[] { 4.5f, 11f, 17.5f })
                 foreach (float z in new[] { 4f, 10.5f, 17f, 22f })
                 {
-                    Mats.Box(root, new Vector3(x, HallH - 0.03f, z), new Vector3(1.6f, 0.04f, 0.35f), panel, false, false, "light panel");
+                    Models.Spawn("light_panel", root, new Vector3(x, HallH - 0.03f, z), shadows: false);
                     var l = new GameObject("Point light").AddComponent<Light>();
                     l.transform.SetParent(root, false);
                     l.transform.localPosition = new Vector3(x, HallH - 0.25f, z);
@@ -124,7 +122,6 @@ namespace RH
 
         void BuildRowDressing()
         {
-            var tray = Mats.Lit(new Color(0.85f, 0.7f, 0.15f), 0.3f, 0.4f);
             var cold = Mats.Lit(new Color(0.47f, 0.52f, 0.6f), 0.15f);
             var hot = Mats.Lit(new Color(0.6f, 0.5f, 0.47f), 0.15f);
             for (int r = 0; r < Shift.Rows.Length; r++)
@@ -133,8 +130,7 @@ namespace RH
                 var b = RackPos(r, Shift.RacksPerRow);
                 float cx = (a.x + b.x) / 2f, len = b.x - a.x + RackView.Width;
                 // Overhead cable tray and perforated cold-aisle tiles in front of the row.
-                Mats.Box(root, new Vector3(cx, 2.55f, a.z + 0.2f), new Vector3(len, 0.05f, 0.4f), tray, false, true, "tray");
-                Mats.Box(root, new Vector3(cx, 2.55f, a.z + 0.02f), new Vector3(len, 0.12f, 0.02f), tray, false, true, "tray lip");
+                Models.Spawn("cable_tray", root, new Vector3(cx, 2.52f, a.z + 0.2f));
                 Mats.Box(root, new Vector3(cx, 0.002f, RowFrontZ(r) - 0.9f), new Vector3(len, 0.003f, 1.2f), cold, false, false, "cold aisle");
                 // Hot aisle behind the row: the rear of every rack, where power and cabling jobs happen.
                 Mats.Box(root, new Vector3(cx, 0.002f, RowFrontZ(r) + RackView.Depth + 0.7f), new Vector3(len, 0.003f, 1.2f), hot, false, false, "hot aisle");
@@ -144,7 +140,7 @@ namespace RH
                 float sz = RowFrontZ(r) - 1.2f;
                 foreach (var (x, yaw) in new[] { (a.x - 0.8f, 90f), (b.x + 0.8f, -90f) })
                 {
-                    Mats.Box(root, new Vector3(x, 2.35f, sz), new Vector3(0.04f, 0.42f, 1.1f), Mats.Lit(new Color(0.08f, 0.1f, 0.13f)), false, false, "sign");
+                    Models.Spawn("row_sign", root, new Vector3(x, 2.35f, sz), palette: Models.With("body", Mats.Lit(new Color(0.08f, 0.1f, 0.13f))));
                     float off = yaw > 0 ? -0.025f : 0.025f;
                     Mats.Text(root, new Vector3(x + off, 2.35f, sz), $"{name}  {Shift.Rows[r]}01-{Shift.Rows[r]}{Shift.RacksPerRow:00}", 0.16f, new Color(0.5f, 0.85f, 1f), TextAnchor.MiddleCenter, yaw);
                 }
@@ -153,7 +149,6 @@ namespace RH
 
         void BuildStorage()
         {
-            var steel = Mats.Lit(new Color(0.3f, 0.36f, 0.45f), 0.3f, 0.5f);
             var sources = new List<(string def, PartKind part, bool isPart)>();
             foreach (var d in Catalog.Stocked) sources.Add((d, PartKind.Drive, false));
             foreach (var part in Catalog.Parts) sources.Add((null, part, true));
@@ -165,58 +160,44 @@ namespace RH
                 g.transform.localPosition = new Vector3(21.1f, 0, 4.6f + i * 1.7f);
                 g.transform.localRotation = Quaternion.Euler(0, 90f, 0); // local -Z (the front) faces -X, toward the hall
                 var t = g.transform;
-                Mats.Box(t, new Vector3(-0.78f, 1f, 0), new Vector3(0.05f, 2f, 0.6f), steel);
-                Mats.Box(t, new Vector3(0.78f, 1f, 0), new Vector3(0.05f, 2f, 0.6f), steel);
-                for (int s = 0; s < 4; s++) Mats.Box(t, new Vector3(0, 0.15f + s * 0.55f, 0), new Vector3(1.6f, 0.04f, 0.6f), steel);
+                Models.Spawn("shelf", t, Vector3.zero);
                 var sh = g.AddComponent<StockShelf>();
                 sh.def = def; sh.part = part; sh.isPart = isPart;
                 shelves.Add(sh);
                 var col = g.AddComponent<BoxCollider>();
                 col.center = new Vector3(0, 1f, 0);
                 col.size = new Vector3(1.6f, 2f, 0.6f);
-                Color c = isPart ? new Color(0.55f, 0.45f, 0.3f) : Catalog.Dev(def).color * 1.4f;
-                var mat = Mats.Lit(c, 0.3f);
+                // Stock in cartons: small parts boxes, or server-sized boxes for equipment.
+                string carton = isPart ? "carton_small" : Models.Carton(Catalog.Dev(def));
                 for (int s = 0; s < 3; s++)
                     for (int k = 0; k < 3; k++)
-                    {
-                        Vector3 size = isPart ? new Vector3(0.3f, 0.12f, 0.25f) : new Vector3(0.45f, 0.045f * Catalog.Dev(def).heightU * 2f, 0.5f);
-                        Mats.Box(t, new Vector3(-0.5f + k * 0.5f, 0.17f + s * 0.55f + size.y / 2, 0), size, mat);
-                    }
+                        Models.Spawn(carton, t, new Vector3(-0.5f + k * 0.5f, 0.157f + s * 0.55f, 0), Quaternion.Euler(0, (s * 3 + k) % 2 == 0 ? 0 : 180, 0));
                 Mats.Text(t, new Vector3(0, 2.18f, -0.05f), isPart ? Catalog.PartName(part).ToUpperInvariant() : Catalog.Dev(def).name.ToUpperInvariant(), 0.12f, new Color(0.85f, 0.92f, 1f));
             }
             // Returns bin and the wipe & shred bench.
-            var bin = Mats.Box(root, new Vector3(18.6f, 0.45f, 4f), new Vector3(1.2f, 0.9f, 0.8f), Mats.Lit(new Color(0.15f, 0.35f, 0.6f)), true, true, "returns");
+            // Returns bin, facing the hall (north).
+            var bin = Models.Spawn("returns_bin", root, new Vector3(18.6f, 0f, 4f), Quaternion.Euler(0, 180, 0), collider: true);
             bin.AddComponent<ReturnBin>();
-            Mats.Text(root, new Vector3(18.6f, 1.1f, 3.55f), "RETURNS", 0.14f, Color.white);
-            var top = Mats.Box(root, new Vector3(15f, 0.85f, 4.1f), new Vector3(2.2f, 0.06f, 0.8f), Mats.Lit(new Color(0.45f, 0.35f, 0.25f)), true);
-            var body = Mats.Box(root, new Vector3(15f, 0.41f, 4.1f), new Vector3(2.1f, 0.82f, 0.7f), steel, true);
-            var shred = Mats.Box(root, new Vector3(15.65f, 1.1f, 4.15f), new Vector3(0.6f, 0.45f, 0.5f), Mats.Lit(new Color(0.5f, 0.12f, 0.08f), 0.3f, 0.3f), true, true, "shredder");
-            AddStation(body, "bench", "Wipe & shred station");
+            Mats.Text(root, new Vector3(18.6f, 1.15f, 4.41f), "RETURNS", 0.14f, Color.white, TextAnchor.MiddleCenter, 180f);
+            // The wipe & shred bench: drawers and work side towards the hall, pegboard against the wall.
+            var bench = Models.Spawn("workbench", root, new Vector3(15f, 0f, 4.1f), Quaternion.Euler(0, 180, 0), collider: true);
+            var shred = Models.Spawn("shredder", root, new Vector3(15.65f, 0.875f, 4.15f), Quaternion.Euler(0, 180, 0), collider: true);
+            AddStation(bench, "bench", "Wipe & shred station");
             AddStation(shred, "bench", "Wipe & shred station");
-            AddStation(top, "bench", "Wipe & shred station");
-            stations["bench"] = top.transform.position + Vector3.up * 0.9f;
-            Mats.Text(root, new Vector3(15f, 1.65f, 3.7f), "WIPE & SHRED", 0.14f, new Color(1f, 0.7f, 0.6f));
+            stations["bench"] = new Vector3(15f, 1.75f, 4.1f);
+            Mats.Text(root, new Vector3(15f, 1.82f, 3.68f), "WIPE & SHRED", 0.14f, new Color(1f, 0.7f, 0.6f), TextAnchor.MiddleCenter, 180f);
             // The crash cart, parked by the bench.
             var cart = new GameObject("Crash cart");
             cart.transform.SetParent(root, false);
             cart.transform.localPosition = new Vector3(13.2f, 0f, 6.6f);
             cart.transform.localRotation = Quaternion.Euler(0, 90f, 0);
             var ct = cart.transform;
-            var dark = Mats.Lit(new Color(0.15f, 0.16f, 0.18f), 0.3f, 0.4f);
-            Mats.Box(ct, new Vector3(0, 0.08f, 0), new Vector3(0.7f, 0.06f, 0.5f), dark);
-            Mats.Box(ct, new Vector3(0, 0.85f, 0), new Vector3(0.7f, 0.04f, 0.5f), dark);
-            Mats.Box(ct, new Vector3(-0.32f, 0.5f, 0), new Vector3(0.04f, 0.9f, 0.04f), steel);
-            Mats.Box(ct, new Vector3(0.32f, 0.5f, 0), new Vector3(0.04f, 0.9f, 0.04f), steel);
-            Mats.Box(ct, new Vector3(0, 1.12f, 0.1f), new Vector3(0.5f, 0.34f, 0.04f), dark);
-            Mats.Box(ct, new Vector3(0, 1.12f, 0.075f), new Vector3(0.45f, 0.28f, 0.01f), Mats.Glow(new Color(0.2f, 0.5f, 0.9f), 1.2f), false, false);
-            Mats.Box(ct, new Vector3(0, 0.89f, -0.08f), new Vector3(0.45f, 0.02f, 0.16f), Mats.Lit(new Color(0.1f, 0.1f, 0.1f)));
+            Models.Spawn("crash_cart", ct, Vector3.zero);
             var cs = cart.AddComponent<StockShelf>();
             cs.def = "kvm";
             shelves.Add(cs);
-            var ccol = cart.AddComponent<BoxCollider>();
-            ccol.center = new Vector3(0, 0.65f, 0);
-            ccol.size = new Vector3(0.7f, 1.3f, 0.5f);
-            Mats.Text(ct, new Vector3(0, 1.45f, 0.05f), "CRASH CART (KVM)", 0.08f, new Color(0.85f, 0.92f, 1f), TextAnchor.MiddleCenter, 0f);
+            Models.FitCollider(cart);
+            Mats.Text(ct, new Vector3(0, 1.5f, 0.05f), "CRASH CART (KVM)", 0.08f, new Color(0.85f, 0.92f, 1f), TextAnchor.MiddleCenter, 0f);
         }
 
         void AddStation(GameObject g, string id, string name)
@@ -229,31 +210,27 @@ namespace RH
         /// <summary>The meet-me room cross-connect frame on the west wall, where carriers' panels meet the customers'.</summary>
         void BuildMeetMe()
         {
-            var frame = Mats.Box(root, new Vector3(0.3f, 1.15f, 12.5f), new Vector3(0.3f, 2.2f, 2.6f), Mats.Lit(new Color(0.1f, 0.11f, 0.13f), 0.3f, 0.4f), true, true, "MMR frame");
-            for (int i = 0; i < 9; i++)
-            {
-                Mats.Box(root, new Vector3(0.46f, 0.35f + i * 0.2f, 12.5f), new Vector3(0.02f, 0.12f, 2.4f), Mats.Lit(new Color(0.25f, 0.27f, 0.3f)), false, false);
-                Mats.Box(root, new Vector3(0.47f, 0.35f + i * 0.2f, 12.5f), new Vector3(0.01f, 0.03f, 2.2f), Mats.Unlit(i % 3 == 0 ? new Color(0.95f, 0.78f, 0.15f) : new Color(0.2f, 0.6f, 0.3f)), false, false);
-            }
+            // The model faces -Z; turned so its face looks east into the hall.
+            var frame = Models.Spawn("mmr_frame", root, new Vector3(0.3f, 0f, 12.5f), Quaternion.Euler(0, -90f, 0),
+                Models.With("body", Mats.Lit(new Color(0.1f, 0.11f, 0.13f), 0.3f, 0.4f)), collider: true);
             AddStation(frame, "mmr", "Meet-me room frame");
-            stations["mmr"] = new Vector3(0.6f, 2.6f, 12.5f);
-            Mats.Text(root, new Vector3(0.5f, 2.5f, 12.5f), "MEET-ME ROOM", 0.2f, new Color(0.95f, 0.8f, 0.3f), TextAnchor.MiddleCenter, -90f);
+            stations["mmr"] = new Vector3(0.6f, 2.75f, 12.5f);
+            Mats.Text(root, new Vector3(0.5f, 2.62f, 12.5f), "MEET-ME ROOM", 0.2f, new Color(0.95f, 0.8f, 0.3f), TextAnchor.MiddleCenter, -90f);
         }
 
         void BuildDock()
         {
-            var pallet = Mats.Lit(new Color(0.55f, 0.42f, 0.25f));
             for (int i = 0; i < 6; i++)
             {
                 var p = DeliverySpot(i);
-                Mats.Box(root, new Vector3(p.x, 0.07f, p.z), new Vector3(1.1f, 0.14f, 1f), pallet, true, true, "pallet");
+                Models.Spawn("pallet", root, new Vector3(p.x, 0f, p.z), collider: true);
             }
-            // Outbound pallet for decommissioned gear, outside the delivery lane.
-            var outbound = Mats.Box(root, new Vector3(11.2f, 0.12f, 22f), new Vector3(1.3f, 0.24f, 1.2f), Mats.Lit(new Color(0.35f, 0.5f, 0.6f)), true, true, "outbound");
+            // Outbound pallet for decommissioned gear, outside the delivery lane, with a sign.
+            var outbound = Models.Spawn("pallet", root, new Vector3(11.2f, 0f, 22f), Quaternion.Euler(0, 90f, 0),
+                Models.With("wood", Mats.Lit(new Color(0.35f, 0.5f, 0.6f), 0.2f)), collider: true);
             AddStation(outbound, "dock", "Outbound pallet");
             stations["dock"] = new Vector3(11.2f, 0.9f, 22f);
-            Mats.Box(root, new Vector3(11.2f, 1.2f, 22.7f), new Vector3(0.05f, 1.2f, 0.05f), Mats.Lit(new Color(0.4f, 0.4f, 0.42f)));
-            Mats.Box(root, new Vector3(11.2f, 1.9f, 22.7f), new Vector3(1f, 0.3f, 0.03f), Mats.Lit(new Color(0.1f, 0.25f, 0.35f)));
+            Models.Spawn("outbound_sign", root, new Vector3(11.2f, 0f, 22.73f), palette: Models.With("plastic", Mats.Lit(new Color(0.1f, 0.25f, 0.35f))));
             Mats.Text(root, new Vector3(11.2f, 1.9f, 22.68f), "OUTBOUND", 0.16f, Color.white, TextAnchor.MiddleCenter, 0f);
         }
 
@@ -261,10 +238,13 @@ namespace RH
 
         void BuildNoc()
         {
-            var desk = Mats.Lit(new Color(0.2f, 0.22f, 0.26f), 0.3f);
-            Mats.Box(root, new Vector3(1.8f, 0.75f, 2.6f), new Vector3(1.0f, 0.05f, 2.4f), desk, true);
-            Mats.Box(root, new Vector3(1.8f, 0.37f, 2.6f), new Vector3(0.9f, 0.74f, 2.3f), Mats.Lit(new Color(0.12f, 0.13f, 0.16f)), true);
-            var screen = Mats.Box(root, new Vector3(1.55f, 1.1f, 2.6f), new Vector3(0.05f, 0.5f, 0.9f), Mats.Glow(new Color(0.2f, 0.55f, 1f), 1.4f), true, false, "NOC screen");
+            // The operator sits on the east side, facing the screens (the model's operator side is -Z).
+            Models.Spawn("noc_desk", root, new Vector3(1.8f, 0f, 2.6f), Quaternion.Euler(0, -90f, 0),
+                Models.With("body", Mats.Lit(new Color(0.2f, 0.22f, 0.26f), 0.3f)), collider: true);
+            Models.Spawn("office_chair", root, new Vector3(2.55f, 0f, 2.75f), Quaternion.Euler(0, 75f, 0), collider: true);
+            // The screens are what you interact with: an invisible box over them.
+            var screen = Mats.Box(root, new Vector3(1.53f, 1.17f, 2.6f), new Vector3(0.12f, 0.4f, 1.9f), Mats.Unlit(Color.black), true, false, "NOC screens");
+            screen.GetComponent<Renderer>().enabled = false;
             screen.AddComponent<Terminal>();
             Mats.Text(root, new Vector3(1.6f, 1.45f, 2.6f), "NOC  TICKETS", 0.1f, new Color(0.6f, 0.85f, 1f), TextAnchor.MiddleCenter, -90f);
         }
@@ -299,14 +279,25 @@ namespace RH
         public Pickup SpawnItem(Item it, Vector3 pos, bool boxed)
         {
             var def = it.Def;
-            float h = Mathf.Max(0.12f, def.heightU * 0.06f + (boxed ? 0.1f : 0f));
-            var g = Mats.Box(dynamic, pos + new Vector3(0, h / 2, 0), new Vector3(boxed ? 0.75f : 0.55f, h, boxed ? 0.9f : 0.8f),
-                boxed ? Mats.Lit(new Color(0.7f, 0.55f, 0.35f)) : Mats.Lit(def.color * 1.3f, 0.35f, 0.3f), true, true, "item");
+            GameObject g;
             if (boxed)
             {
-                Mats.Box(g.transform, new Vector3(0, 0.51f, 0), new Vector3(0.15f, 0.02f, 1.01f), Mats.Lit(new Color(0.85f, 0.75f, 0.55f)));
-                Mats.Box(g.transform, new Vector3(0.3f, 0.51f, 0.3f), new Vector3(0.25f, 0.02f, 0.25f), Mats.Unlit(Catalog.CustColor(it.label.Split(" - ")[0])));
+                // A customer's shipment: a big carton with their colour on a sticker.
+                g = Models.Spawn(Models.Crate(def), dynamic, pos, collider: true);
+                float top = Models.LocalBounds(g).max.y;
+                Mats.Box(g.transform, new Vector3(0.22f, top + 0.0012f, 0.25f), new Vector3(0.22f, 0.002f, 0.22f), Mats.Unlit(Catalog.CustColor(it.label.Split(" - ")[0])), false, false);
             }
+            else if (def.kind == DevKind.Tool) g = Models.Spawn(Models.For(def), dynamic, pos, collider: true);
+            else
+            {
+                // Bare equipment on the floor: the unit itself, centred on the spot.
+                g = new GameObject("item");
+                g.transform.SetParent(dynamic, false);
+                g.transform.localPosition = pos;
+                Models.Spawn(Models.For(def), g.transform, new Vector3(0, 0, -0.45f), palette: Models.Unit(def));
+                Models.FitCollider(g);
+            }
+            g.name = "item";
             var p = g.AddComponent<Pickup>();
             p.item = it;
             return p;

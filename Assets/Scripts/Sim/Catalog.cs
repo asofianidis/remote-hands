@@ -123,6 +123,20 @@ namespace RH
 
         public static readonly string[] Components = { "BIOS", "BMC", "NIC" };
 
+        /// <summary>
+        /// Where drive bay i sits on a unit's front face (centre and size in metres, x from the unit's
+        /// centre, y from its bottom). The Blender models use the same grid.
+        /// </summary>
+        public static void Bay(DevDef def, int i, out Vector2 center, out Vector2 size)
+        {
+            int cols = def.bays <= 4 ? 4 : def.bays <= 12 ? 6 : 12;
+            int rows = Mathf.CeilToInt(def.bays / (float)cols);
+            float h = def.heightU * 0.0445f, w = 0.42f / cols, hh = (h - 0.006f) / rows;
+            int r = i / cols, c = i % cols;
+            center = new Vector2(-0.21f + w * (c + 0.5f), 0.003f + hh * (rows - 1 - r + 0.5f));
+            size = new Vector2(w - 0.004f, hh - 0.003f);
+        }
+
         public static readonly UpgradeDef[] Upgrades =
         {
             new UpgradeDef { id = "shoes", name = "Running Shoes", cost = 250, desc = "Walk and sprint 25% faster." },

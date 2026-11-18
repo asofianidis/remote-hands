@@ -107,13 +107,18 @@ namespace RH
             float y = 0;
             foreach (var it in inv.hands)
             {
-                float h = it.Def.heightU * 0.0445f;
-                bool boxed = it.CustomerGear;
-                var g = Mats.Box(heldRoot, new Vector3(0, y + h / 2, 0), new Vector3(0.5f, boxed ? h + 0.08f : h, 0.55f),
-                    boxed ? Mats.Lit(new Color(0.7f, 0.55f, 0.35f)) : Mats.Lit(it.Def.color * 1.4f, 0.35f, 0.3f), false, false, "held");
-                g.layer = 0;
-                heldViews.Add(g);
-                y += (boxed ? h + 0.08f : h) + 0.01f;
+                // The real thing in your arms: a customer's carton, the crash cart (shrunk to stay out of
+                // the way), or the bare unit, carried front-first and scaled to sit inside the view.
+                var def = it.Def;
+                var holder = new GameObject("held").transform;
+                holder.SetParent(heldRoot, false);
+                if (it.CustomerGear) Models.Spawn(Models.Crate(def), holder, Vector3.zero, scale: Vector3.one * 0.62f, shadows: false);
+                else if (def.kind == DevKind.Tool) Models.Spawn(Models.For(def), holder, new Vector3(0, 0, 0.1f), scale: Vector3.one * 0.3f, shadows: false);
+                else Models.Spawn(Models.For(def), holder, new Vector3(0, 0, -0.26f), palette: Models.Unit(def), scale: new Vector3(0.9f, 0.9f, 0.58f), shadows: false);
+                float h = Models.LocalBounds(holder.gameObject).size.y;
+                holder.localPosition = new Vector3(0, y, 0);
+                heldViews.Add(holder.gameObject);
+                y += h + 0.01f;
             }
         }
     }

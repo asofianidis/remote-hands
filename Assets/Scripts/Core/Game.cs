@@ -142,7 +142,7 @@ namespace RH
             if (shift == null || shift.career != career || screen == GameScreen.Menu || screen == GameScreen.Summary || screen == GameScreen.Shop || screen == GameScreen.Fired) return;
             var s = shift.Snapshot();
             foreach (var p in FindObjectsByType<Pickup>())
-                s.floor.Add(new FloorItem { item = p.item, pos = new Vector3(p.transform.position.x, 0f, p.transform.position.z) });
+                s.floor.Add(new FloorItem { item = p.item, pos = p.transform.position });
             s.playerPos = player.transform.position;
             s.playerYaw = player.transform.eulerAngles.y;
             s.tracked = trackedTicket;

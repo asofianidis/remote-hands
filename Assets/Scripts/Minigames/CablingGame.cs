@@ -52,8 +52,7 @@ namespace RH
             bool isSwitch = def.kind == DevKind.Switch;
 
             // The unit's rear, rebuilt in the rig so its connectors can be worked on.
-            Box(rig, new Vector3(0, dy, Back - 0.46f), new Vector3(0.53f, h - 0.004f, 0.9f), Mats.Lit(def.color, 0.35f, 0.3f), "unit");
-            Box(rig, new Vector3(0, dy, Back - 0.01f), new Vector3(0.5f, h * 0.86f, 0.01f), Mats.Lit(def.color * 0.8f, 0.3f, 0.3f), "rear");
+            Models.Spawn(Models.For(def), rig, new Vector3(0, bottom, -RackView.Depth / 2f + 0.05f), palette: Models.Unit(def));
 
             // A patch field around the unit: switch and patch panel above it (below it near the top of the
             // rack), and outlets on the PDU strips at its height.

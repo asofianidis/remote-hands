@@ -156,8 +156,14 @@ namespace RH
         /// <summary>The on-screen rectangle (canvas units) of a world-space box.</summary>
         protected Rect UiRect(Transform t)
         {
-            var r = t.GetComponent<Renderer>();
-            var b = r != null ? r.bounds : new Bounds(t.position, Vector3.one * 0.01f);
+            // Everything under t that's drawn (a model's parts are child objects).
+            var b = new Bounds(t.position, Vector3.one * 0.01f);
+            bool first = true;
+            foreach (var r in t.GetComponentsInChildren<Renderer>())
+            {
+                if (first) { b = r.bounds; first = false; }
+                else b.Encapsulate(r.bounds);
+            }
             Vector2 min = new Vector2(float.MaxValue, float.MaxValue), max = new Vector2(float.MinValue, float.MinValue);
             for (int i = 0; i < 8; i++)
             {
@@ -225,18 +231,10 @@ namespace RH
             if (rv == null) return;
             MakeRig(rv.transform);
             float z = -RackView.Depth / 2f - 0.6f;
-            var dark = Mats.Lit(new Color(0.15f, 0.16f, 0.18f), 0.3f, 0.4f);
-            var steel = Mats.Lit(new Color(0.3f, 0.36f, 0.45f), 0.3f, 0.5f);
-            Box(rig, new Vector3(0, 0.08f, z), new Vector3(0.7f, 0.06f, 0.5f), dark);
-            Box(rig, new Vector3(0, 0.95f, z), new Vector3(0.7f, 0.04f, 0.5f), dark);
-            Box(rig, new Vector3(-0.32f, 0.5f, z), new Vector3(0.04f, 0.9f, 0.04f), steel);
-            Box(rig, new Vector3(0.32f, 0.5f, z), new Vector3(0.04f, 0.9f, 0.04f), steel);
-            Box(rig, new Vector3(0, 0.98f, z - 0.1f), new Vector3(0.45f, 0.02f, 0.16f), Mats.Lit(new Color(0.1f, 0.1f, 0.1f)), "keyboard");
+            // The crash cart model's monitor: display centred at (0, 1.25, +0.064), 0.56 x 0.315, facing -Z.
+            Models.Spawn("crash_cart", rig, new Vector3(0, 0, z), palette: Models.With("screen", Mats.Unlit(new Color(0.01f, 0.02f, 0.04f))));
             const float w = 0.56f, h = 0.315f;
             float y = 1.25f;
-            Box(rig, new Vector3(0, y, z + 0.08f), new Vector3(w + 0.04f, h + 0.04f, 0.03f), dark, "monitor");
-            Box(rig, new Vector3(0, y, z + 0.064f), new Vector3(w, h, 0.002f), Mats.Unlit(new Color(0.01f, 0.02f, 0.04f)), "display");
-            Box(rig, new Vector3(0, (0.95f + y) / 2f, z + 0.1f), new Vector3(0.04f, y - 0.95f, 0.03f), steel);
             // A KVM lead from the cart into the server.
             var lead = Mats.Line(rig, new Color(0.1f, 0.1f, 0.12f), 0.008f);
             var d = Dev;

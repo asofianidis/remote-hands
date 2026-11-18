@@ -98,6 +98,19 @@ Every key except Esc can be rebound in Settings, which also has field of view an
 - `Assets/Scripts/Sim` holds the scene-independent shift, ticket, hall and scoring logic, covered by
   edit-mode tests in `Assets/Tests/Editor`. Saves are `career.json` (career and data hall) and
   `shift.json` (a shift in progress) in `Application.persistentDataPath`.
+- 3D models (racks, every rack-mount unit, swap parts, shelving, carts, furniture, the meet-me
+  frame, the dock door...) are generated in Blender by `Tools/blender/build_models.py` and exported
+  as FBX to `Assets/Resources/Models`. Their material slots are named (`body`, `trim`, `screen`...)
+  and swapped for the game's shaders at runtime by `Assets/Scripts/World/Models.cs`. To regenerate
+  (Blender 5.x), then check them on contact sheets:
+
+  ```sh
+  blender --background --factory-startup --python Tools/blender/build_models.py -- Assets/Resources/Models
+  blender --background --factory-startup --python Tools/blender/preview.py -- Assets/Resources/Models <out_dir>
+  ```
+
+  Drive bay, PSU and optic positions in the models match the gameplay code (`Catalog.Bay` and the
+  swap game), so change both together.
 - Menu **Remote Hands > Setup Main Scene** recreates `Assets/Scenes/Main.unity`.
 - Menu **Remote Hands > Build Windows Player** builds to `Builds/Windows/RemoteHands.exe`.
 

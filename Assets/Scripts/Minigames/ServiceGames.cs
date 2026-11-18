@@ -225,23 +225,30 @@ namespace RH
         protected override void Begin()
         {
             var def = Catalog.Dev(task.def);
-            int n = Mathf.Clamp(def.bays, 1, 8);
+            int n = Mathf.Clamp(def.bays, 1, 12);
             var rnd = new System.Random(task.tag.GetHashCode());
             MakeRig(game.facility.transform);
             float h = Mathf.Max(0.045f, def.heightU * RackView.UnitH);
             // The unit lies on the bench with its drive bays facing you.
-            Box(rig, new Vector3(14.55f, Top + h / 2f, 3.95f), new Vector3(0.53f, h, 0.5f), Mats.Lit(def.color, 0.35f, 0.3f), "unit");
-            Box(rig, new Vector3(14.55f, Top + h / 2f, 4.201f), new Vector3(0.48f, h * 0.9f, 0.004f), Mats.Lit(def.color * 1.4f, 0.5f, 0.2f), "face");
+            // (Turned to face the hall, and shortened so it fits on the bench; its drives are the rig's own.)
+            var shell = Models.Spawn(Models.For(def), rig, new Vector3(14.55f, Top, 4.2f), Quaternion.Euler(0, 180, 0), Models.Unit(def), scale: new Vector3(1f, 1f, 0.55f));
+            Models.ShowPart(shell, "Bays", false);
             shredder = Box(rig, Shredder + new Vector3(0, 0.235f, 0), new Vector3(0.5f, 0.02f, 0.12f), Mats.Unlit(new Color(0.02f, 0.02f, 0.02f)), "shredder slot").transform;
             var sled = Mats.Glow(new Color(0.7f, 0.72f, 0.76f), 0.9f);
-            float w = 0.42f / n;
+            var pal = new Models.Palette().Set("sled", sled).Set("trim", sled);
             for (int i = 0; i < n; i++)
             {
                 string s = "WD" + rnd.Next(100000, 999999) + (char)('A' + rnd.Next(26));
-                var slot = new Vector3(14.34f + w * (i + 0.5f), Top + h / 2f, 4.215f);
-                var spot = new Vector3(14.08f + i * 0.105f, Top + 0.012f, 4.38f);
-                var t = Box(rig, slot, new Vector3(w - 0.006f, h * 0.75f, 0.03f), sled, "drive").transform;
-                Box(t, new Vector3(0.3f, 0.25f, 0.52f), new Vector3(0.12f, 0.15f, 0.05f), Mats.Unlit(new Color(0.3f, 1f, 0.4f)), "led");
+                // The bay grid, mirrored because the unit is turned round.
+                Catalog.Bay(def, i, out var c, out var sz);
+                var slot = new Vector3(14.55f - c.x, Top + c.y, 4.2f - 0.047f);
+                var spot = new Vector3(14.08f + i * (n > 8 ? 0.088f : 0.105f), Top + 0.012f, 4.38f);
+                var t = new GameObject("drive").transform;
+                t.SetParent(rig, false);
+                t.localPosition = slot;
+                t.localRotation = Quaternion.Euler(0, 180, 0);
+                Models.Spawn(Models.Sled(def), t, Vector3.zero, palette: pal, shadows: false);
+                Box(t, new Vector3(sz.x * 0.35f, sz.y * 0.28f, -0.052f), new Vector3(0.004f, 0.004f, 0.002f), Mats.Unlit(new Color(0.3f, 1f, 0.4f)), "led");
                 drives.Add(new Drv { serial = s, t = t, slot = slot, spot = spot, pos = slot });
             }
             bench = new Plane(Vector3.up, new Vector3(0, Top + 0.02f, 0));
@@ -290,7 +297,7 @@ namespace RH
                 if (d == dragging) { d.t.position = Vector3.Lerp(d.t.position, d.pos + Vector3.up * 0.04f, dt * 20f); continue; }
                 d.pos = d.st == St.InUnit ? d.slot : d.spot;
                 d.t.position = Vector3.Lerp(d.t.position, d.pos, dt * 14f);
-                d.t.rotation = Quaternion.Slerp(d.t.rotation, d.st == St.InUnit ? Quaternion.identity : Quaternion.Euler(90, 0, 0), dt * 14f);
+                d.t.rotation = Quaternion.Slerp(d.t.rotation, d.st == St.InUnit ? Quaternion.Euler(0, 180, 0) : Quaternion.Euler(-90, 180, 0), dt * 14f);
             }
             if (shredAnim > 0) shredder.localPosition = Shredder + new Vector3(Mathf.Sin(time * 90f) * 0.004f, 0.235f, 0);
         }

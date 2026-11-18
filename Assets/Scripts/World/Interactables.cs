@@ -30,20 +30,10 @@ namespace RH
         {
             this.label = label;
             var t = transform;
-            var frame = Mats.Lit(new Color(0.06f, 0.065f, 0.075f), 0.35f, 0.3f);
-            var post = Mats.Lit(new Color(0.45f, 0.47f, 0.5f), 0.5f, 0.7f);
-            Mats.Box(t, new Vector3(-Width / 2 + 0.01f, Height / 2, 0), new Vector3(0.02f, Height, Depth), frame);
-            Mats.Box(t, new Vector3(Width / 2 - 0.01f, Height / 2, 0), new Vector3(0.02f, Height, Depth), frame);
-            Mats.Box(t, new Vector3(0, Height - 0.01f, 0), new Vector3(Width, 0.02f, Depth), frame);
-            Mats.Box(t, new Vector3(0, 0.05f, 0), new Vector3(Width, 0.1f, Depth), frame);
-            // The rear is open: posts, a red A-feed PDU and a blue B-feed PDU down the back corners.
-            foreach (float x in new[] { -0.255f, 0.255f })
-            {
-                Mats.Box(t, new Vector3(x, Height / 2, -Depth / 2 + 0.04f), new Vector3(0.025f, Height - 0.1f, 0.02f), post);
-                Mats.Box(t, new Vector3(x, Height / 2, Depth / 2 - 0.04f), new Vector3(0.025f, Height - 0.1f, 0.02f), post);
-            }
-            Mats.Box(t, new Vector3(-PduX, 1.05f, Depth / 2 - 0.07f), new Vector3(0.036f, 1.8f, 0.05f), Mats.Lit(new Color(0.55f, 0.12f, 0.1f), 0.3f, 0.3f), false, true, "PDU A");
-            Mats.Box(t, new Vector3(PduX, 1.05f, Depth / 2 - 0.07f), new Vector3(0.036f, 1.8f, 0.05f), Mats.Lit(new Color(0.12f, 0.2f, 0.55f), 0.3f, 0.3f), false, true, "PDU B");
+            // The cabinet (open front and rear, mounting rails), and a red A-feed and blue B-feed PDU down the back.
+            Models.Spawn("rack", t, Vector3.zero, palette: Models.With("body", Mats.Lit(new Color(0.06f, 0.065f, 0.075f), 0.35f, 0.3f)));
+            Models.Spawn("pdu", t, new Vector3(-PduX, 1.05f, Depth / 2 - 0.07f), palette: Models.With("feed", Mats.Lit(new Color(0.55f, 0.12f, 0.1f), 0.3f, 0.3f)));
+            Models.Spawn("pdu", t, new Vector3(PduX, 1.05f, Depth / 2 - 0.07f), palette: Models.With("feed", Mats.Lit(new Color(0.12f, 0.2f, 0.55f), 0.3f, 0.3f)));
             Mats.Text(t, new Vector3(0, Height + 0.09f, Depth / 2 - 0.05f), label + "  REAR", 0.09f, new Color(1f, 0.75f, 0.6f), TextAnchor.MiddleCenter, 180f);
             var col = gameObject.AddComponent<BoxCollider>();
             col.center = new Vector3(0, Height / 2, 0);
@@ -66,25 +56,25 @@ namespace RH
                 var def = d.Def;
                 float h = def.heightU * UnitH - 0.004f;
                 float y = UY(d.u) + h / 2 + 0.002f;
-                var body = Mats.Lit(def.color, 0.35f, 0.3f);
-                Mats.Box(content, new Vector3(0, y, front + 0.45f), new Vector3(0.53f, h, 0.9f), body, false, true, "dev");
-                Mats.Box(content, new Vector3(0, y, front - 0.005f), new Vector3(0.48f, h * 0.86f, 0.012f), Mats.Lit(def.color * 1.6f, 0.5f, 0.2f), false, false);
-                Mats.Box(content, new Vector3(-0.245f, y, front - 0.008f), new Vector3(0.012f, h * 0.9f, 0.014f), Mats.Unlit(Catalog.CustColor(d.owner)), false, false);
-                if (def.bays > 0)
+                float y0 = UY(d.u);
+                Models.Spawn(Models.For(def), content, new Vector3(0, y0, front), palette: Models.Unit(def));
+                // The customer's colour on the left rack ear.
+                Mats.Box(content, new Vector3(-0.252f, y, front - 0.0045f), new Vector3(0.008f, h * 0.8f, 0.002f), Mats.Unlit(Catalog.CustColor(d.owner)), false, false);
+                var green = Mats.Unlit(new Color(0.2f, 0.9f, 0.3f));
+                var amber = Mats.Unlit(new Color(1f, 0.6f, 0.05f));
+                for (int i = 0; i < def.bays; i++)
                 {
-                    int cols = Mathf.Min(def.bays, def.heightU == 1 ? 4 : 6);
-                    for (int i = 0; i < cols; i++)
-                    {
-                        float bx = -0.17f + i * (0.3f / Mathf.Max(1, cols - 1));
-                        bool bad = d.failedBay >= 0 && d.failedBay % cols == i;
-                        var led = Mats.Box(content, new Vector3(bx, y - h * 0.3f, front - 0.014f), new Vector3(0.008f, 0.008f, 0.004f),
-                            bad ? Mats.Unlit(new Color(1f, 0.6f, 0.05f)) : Mats.Unlit(new Color(0.2f, 0.9f, 0.3f)), false, false);
-                        if (bad) blinkers.Add(led.GetComponent<Renderer>());
-                    }
+                    // An activity light in the top corner of each drive sled; the failed one shows amber.
+                    Catalog.Bay(def, i, out var c, out var s);
+                    bool bad = d.failedBay == i;
+                    var led = Mats.Box(content, new Vector3(c.x + s.x * 0.35f, y0 + c.y + s.y * 0.28f, front - 0.0065f), new Vector3(0.004f, 0.004f, 0.002f), bad ? amber : green, false, false);
+                    if (bad) blinkers.Add(led.GetComponent<Renderer>());
                 }
                 bool off = d.fault == Fault.NoPower;
                 bool alarm = !off && (d.failedPsu >= 0 || d.fault != Fault.None);
-                var pwr = Mats.Box(content, new Vector3(0.21f, y, front - 0.014f), new Vector3(0.012f, 0.012f, 0.004f),
+                float px = def.bays > 0 ? 0.232f : def.kind == DevKind.Switch ? 0.236f : 0.205f;
+                float py = def.kind == DevKind.Switch ? y0 + h * 0.85f : y;
+                var pwr = Mats.Box(content, new Vector3(px, py, front - 0.0075f), new Vector3(0.006f, 0.006f, 0.002f),
                     off ? Mats.Unlit(new Color(0.05f, 0.05f, 0.05f)) : alarm ? Mats.Unlit(new Color(1f, 0.15f, 0.1f)) : Mats.Unlit(new Color(0.3f, 0.6f, 1f)), false, false);
                 if (alarm) blinkers.Add(pwr.GetComponent<Renderer>());
                 BuildRear(d, y, h, front + 0.9f);
@@ -106,21 +96,17 @@ namespace RH
             beacon.SetActive(shift.TasksAt(rack.label).Any(x => !x.task.done));
         }
 
-        /// <summary>The back of a unit: its PSUs with status lights, a port block and the two power cords.</summary>
+        /// <summary>The live parts of a unit's rear (the model has the rest): PSU status lights and the two power cords.</summary>
         void BuildRear(Device d, float y, float h, float back)
         {
             float z = back + 0.006f;
-            Mats.Box(content, new Vector3(0, y, z), new Vector3(0.5f, h * 0.86f, 0.01f), Mats.Lit(d.Def.color * 0.8f, 0.3f, 0.3f), false, false);
-            if (d.Def.kind == DevKind.Switch || d.Def.ports.Length > 3)
-                Mats.Box(content, new Vector3(-0.08f, y, z + 0.008f), new Vector3(0.16f, Mathf.Min(h * 0.6f, 0.03f), 0.008f), Mats.Lit(new Color(0.05f, 0.05f, 0.06f)), false, false);
             for (int i = 0; i < d.Def.psus; i++)
             {
                 float px = 0.1f + i * 0.09f;
-                float ph = Mathf.Min(h * 0.75f, 0.035f);
-                Mats.Box(content, new Vector3(px, y, z + 0.008f), new Vector3(0.075f, ph, 0.008f), Mats.Lit(new Color(0.3f, 0.31f, 0.33f), 0.4f, 0.5f), false, false);
+                float ph = Mathf.Max(0.03f, d.Def.heightU * UnitH * 0.8f);
                 bool failed = d.failedPsu == i;
                 bool off = d.fault == Fault.NoPower;
-                var led = Mats.Box(content, new Vector3(px + 0.028f, y, z + 0.014f), new Vector3(0.008f, 0.008f, 0.004f),
+                var led = Mats.Box(content, new Vector3(px + 0.022f, y + Mathf.Min(0.011f, ph * 0.36f), z + 0.008f), new Vector3(0.005f, 0.004f, 0.002f),
                     Mats.Unlit(off ? new Color(0.05f, 0.05f, 0.05f) : failed ? new Color(1f, 0.15f, 0.1f) : new Color(0.2f, 0.9f, 0.3f)), false, false);
                 if (failed) blinkers.Add(led.GetComponent<Renderer>());
                 // Cord to the PDU on its side: PSU 1 to the red A feed, PSU 2 to the blue B feed.

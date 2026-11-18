@@ -72,15 +72,20 @@ namespace RH
         {
             unit = new GameObject("unit").transform;
             unit.SetParent(rig, false);
-            Box(unit, new Vector3(0, h / 2f, 0.45f), new Vector3(0.53f, h - 0.004f, 0.9f), Mats.Lit(def.color, 0.35f, 0.3f), "body");
-            Box(unit, new Vector3(0, h / 2f, -0.004f), new Vector3(0.48f, h * 0.86f, 0.008f), Mats.Lit(def.color * 1.6f, 0.5f, 0.2f), "face");
-            var ear = Mats.Lit(new Color(0.55f, 0.57f, 0.6f), 0.5f, 0.6f);
-            Box(unit, new Vector3(-0.258f, h / 2f, -0.002f), new Vector3(0.026f, h - 0.004f, 0.004f), ear, "ear");
-            Box(unit, new Vector3(0.258f, h / 2f, -0.002f), new Vector3(0.026f, h - 0.004f, 0.004f), ear, "ear");
-            Box(unit, new Vector3(0.21f, h / 2f, -0.01f), new Vector3(0.01f, 0.01f, 0.004f), Mats.Unlit(new Color(0.3f, 0.6f, 1f)), "led");
-            if (def.bays > 0)
-                for (int i = 0; i < Mathf.Min(def.bays, 6); i++)
-                    Box(unit, new Vector3(-0.17f + i * 0.06f, h * 0.3f, -0.01f), new Vector3(0.008f, 0.008f, 0.004f), Mats.Unlit(new Color(0.2f, 0.9f, 0.3f)), "led");
+            Models.Spawn(Models.For(def), unit, Vector3.zero, palette: Models.Unit(def));
+        }
+
+        /// <summary>The unit's front face on screen, for the alignment outline.</summary>
+        Rect FaceRect()
+        {
+            Vector2 min = new Vector2(float.MaxValue, float.MaxValue), max = new Vector2(float.MinValue, float.MinValue);
+            foreach (var c in new[] { new Vector3(-0.27f, 0, 0), new Vector3(0.27f, 0, 0), new Vector3(-0.27f, h, 0), new Vector3(0.27f, h, 0) })
+            {
+                var p = ToUi(unit.TransformPoint(c));
+                min = Vector2.Min(min, p);
+                max = Vector2.Max(max, p);
+            }
+            return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
         }
 
         /// <summary>Unit height follows pos (in U); push 0 is fully out in front of the rack, 1 is home.</summary>
@@ -204,8 +209,7 @@ namespace RH
             {
                 bool aligned = Mathf.Abs(pos - target) <= tol;
                 // Outline the unit's face so alignment is easy to read against the rack.
-                var face = unit.Find("face");
-                if (face != null) Ui.Border(UiRect(face), jam > 0 ? Ui.Bad : aligned ? Ui.Good : Ui.Warn, 3f);
+                Ui.Border(FaceRect(), jam > 0 ? Ui.Bad : aligned ? Ui.Good : Ui.Warn, 3f);
                 var panel = new Rect(20, 20, 300, 230);
                 Ui.Box(panel, new Color(0.03f, 0.05f, 0.07f, 0.85f));
                 Ui.Label(new Rect(panel.x + 18, panel.y + 14, 260, 24), "ALIGNMENT", 15, Ui.Dim, TextAnchor.UpperLeft, true);

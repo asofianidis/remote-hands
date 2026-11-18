@@ -23,7 +23,7 @@ namespace RH
         /// <summary>Only one follow-up ticket per job, however many times the wrong part gets pulled.</summary>
         bool followedUp;
 
-        class Slot { public Transform part, latch, socket, blades; public Renderer led; public Vector3 home, latchHome, ledHome; public string label; }
+        class Slot { public Transform part, latch, socket, blades; public Renderer led; public Vector3 home, latchHome, ledHome; public float depth; public string label; }
         Slot[] S;
         Vector3 pullDir;
         float pullLen;
@@ -87,30 +87,29 @@ namespace RH
             dev = new GameObject("unit").transform;
             dev.SetParent(rig, false);
             dev.localPosition = new Vector3(0, y0, slide);
-            var body = Mats.Lit(def.color, 0.35f, 0.3f);
             // Slightly self-lit so the parts read even in the rack's shadow.
             partOk = Mats.Glow(new Color(0.55f, 0.57f, 0.6f), 0.35f);
+            var partPalette = new Models.Palette().Set("sled", partOk).Set("trim", Mats.Glow(new Color(0.6f, 0.62f, 0.66f), 0.3f))
+                .Set("pcb", Mats.Glow(new Color(0.1f, 0.45f, 0.2f), 0.4f));
             S = new Slot[slots];
+            // The unit itself: slid out with the lid off for memory and fans, otherwise in place with the
+            // part being swapped (drive bays, PSUs or optics) left out of the model so the rig's own can move.
+            var shell = Models.Spawn(open ? Models.Open(def) : Models.For(def), dev, new Vector3(0, 0, Front), palette: Models.Unit(def));
+            if (!open) Models.ShowPart(shell, mode == SwapMode.Drive ? "Bays" : mode == SwapMode.Psu ? "PSUs" : "Optics", false);
             if (open)
             {
-                // Chassis tray with the lid off: floor, walls, two CPU heatsinks, a fan wall and two DIMM banks.
-                Box(dev, new Vector3(0, 0.002f, Front + 0.45f), new Vector3(0.52f, 0.004f, 0.9f), Mats.Lit(def.color * 0.7f), "floor");
-                Box(dev, new Vector3(-0.258f, h / 2f, Front + 0.45f), new Vector3(0.004f, h, 0.9f), body, "wall");
-                Box(dev, new Vector3(0.258f, h / 2f, Front + 0.45f), new Vector3(0.004f, h, 0.9f), body, "wall");
-                Box(dev, new Vector3(0, h / 2f, Front + 0.002f), new Vector3(0.52f, h, 0.004f), Mats.Lit(def.color * 1.6f, 0.5f, 0.2f), "face");
-                Box(dev, new Vector3(0, 0.004f, Front + 0.6f), new Vector3(0.48f, 0.004f, 0.45f), Mats.Lit(new Color(0.08f, 0.3f, 0.15f)), "board");
-                foreach (float cz in new[] { 0.36f, 0.56f })
-                    Box(dev, new Vector3(0, Mathf.Min(h - 0.006f, 0.03f) / 2f + 0.006f, Front + cz), new Vector3(0.09f, Mathf.Min(h - 0.006f, 0.03f), 0.09f), Mats.Lit(new Color(0.7f, 0.72f, 0.75f), 0.5f, 0.8f), "heatsink");
                 // Rails back into the rack.
                 Box(rig, new Vector3(-0.27f, y0 + 0.01f, Front + 0.1f), new Vector3(0.01f, 0.01f, 0.9f), partOk, "rail");
                 Box(rig, new Vector3(0.27f, y0 + 0.01f, Front + 0.1f), new Vector3(0.01f, 0.01f, 0.9f), partOk, "rail");
             }
-            else
+            string partModel = mode switch
             {
-                Box(dev, new Vector3(0, h / 2f, Front + 0.45f), new Vector3(0.53f, h - 0.004f, 0.9f), body, "body");
-                if (mode == SwapMode.Drive) Box(dev, new Vector3(0, h / 2f, Front - 0.001f), new Vector3(0.48f, h * 0.9f, 0.004f), Mats.Lit(def.color * 1.3f, 0.5f, 0.2f), "face");
-                else Box(dev, new Vector3(0, h / 2f, Back + 0.003f), new Vector3(0.5f, h * 0.86f, 0.006f), Mats.Lit(def.color * 0.8f, 0.3f, 0.3f), "rear");
-            }
+                SwapMode.Drive => Models.Sled(def),
+                SwapMode.Psu => Models.Psu(def),
+                SwapMode.Sfp => "sfp_optic",
+                SwapMode.Dimm => "dimm",
+                _ => "fan_module",
+            };
 
             var dark = Mats.Unlit(new Color(0.01f, 0.01f, 0.012f));
             var latchMat = Mats.Lit(new Color(0.9f, 0.55f, 0.15f), 0.4f, 0.3f);
@@ -191,13 +190,15 @@ namespace RH
                 if (pullDir == Vector3.forward) socketPos = new Vector3(home.x, home.y, Back + 0.008f);
                 s.socket = Box(dev, socketPos, socketSize, dark, "socket").transform;
                 s.home = home;
-                var part = Box(dev, home, size, mode == SwapMode.Dimm ? Mats.Glow(new Color(0.1f, 0.45f, 0.2f), 0.4f) : partOk, "part");
-                s.part = part.transform;
+                s.part = new GameObject("part").transform;
+                s.part.SetParent(dev, false);
+                s.part.localPosition = home;
+                // The model is built at its real size; only the fan's height varies a little with the chassis.
+                var partScale = mode == SwapMode.Fan ? new Vector3(1f, size.y / 0.04f, 1f) : Vector3.one;
+                Models.Spawn(partModel, s.part, Vector3.zero, palette: partPalette, scale: partScale, shadows: false);
+                s.depth = size.z;
                 s.latchHome = latchOff;
-                s.latch = Box(s.part, Vector3.zero, Vector3.one, i == bad ? latchMat : latchIdle, "latch").transform;
-                // The latch is sized in world terms, so undo the part's scale.
-                s.latch.localScale = new Vector3(latchSize.x / size.x, latchSize.y / size.y, latchSize.z / size.z);
-                s.latch.localPosition = new Vector3(latchOff.x / size.x, latchOff.y / size.y, latchOff.z / size.z);
+                s.latch = Box(s.part, latchOff, latchSize, i == bad ? latchMat : latchIdle, "latch").transform;
                 // Status LED on the outer face.
                 var ledPos = pullDir == Vector3.up ? home + new Vector3(0.006f, -size.y / 2f + 0.002f, -size.z / 2f - 0.006f) : home + new Vector3(size.x * 0.35f, size.y * 0.25f, 0) + pullDir * (size.z / 2f + 0.002f);
                 if (mode == SwapMode.Sfp) ledPos = home + new Vector3(0, 0.009f, size.z / 2f);
@@ -350,7 +351,7 @@ namespace RH
                 s.part.localPosition = s.home + pullDir * out01 * pullLen;
                 s.led.transform.localPosition = s.ledHome + pullDir * out01 * pullLen;
                 float lat = isBad ? latch : 0f;
-                s.latch.localPosition = new Vector3(s.latchHome.x / s.part.localScale.x, (s.latchHome.y - lat * 0.012f) / s.part.localScale.y, s.latchHome.z / s.part.localScale.z);
+                s.latch.localPosition = s.latchHome + new Vector3(0, -lat * 0.012f, 0);
                 s.latch.localRotation = Quaternion.Euler(lat * 35f, 0, 0);
                 bool failed = isBad && step < 5 && step != 4;
                 Material led;
@@ -365,7 +366,7 @@ namespace RH
                 if (s.blades != null)
                 {
                     s.blades.gameObject.SetActive(!gone);
-                    s.blades.localPosition = s.home + new Vector3(0, 0, -s.part.localScale.z / 2f - 0.003f) + pullDir * out01 * pullLen;
+                    s.blades.localPosition = s.home + new Vector3(0, 0, -s.depth / 2f - 0.003f) + pullDir * out01 * pullLen;
                     bool still = isBad && step < 5;
                     s.blades.localRotation = Quaternion.Euler(0, 0, still ? 20f : spin + i * 37f);
                 }
