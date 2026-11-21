@@ -162,8 +162,3 @@ Unity -batchmode -quit -projectPath . -executeMethod RH.EditorTools.BuildTools.B
 Run the built player with `-shotdir <folder>` to capture screenshots of every screen and minigame,
 then quit. It also checks photo framing from the front and rear of a rack and logs the result
 (`[shot] ... accepted`).
-
-### Continuous integration
-
-`.github/workflows/tests.yml` runs the edit-mode tests on push. It skips until `UNITY_LICENSE`
-(or `UNITY_EMAIL` and `UNITY_PASSWORD`) repository secrets are added.
